@@ -443,9 +443,7 @@ impl ArrayData {
             | DataType::Interval(_)
             | DataType::FixedSizeBinary(_)
             | DataType::Decimal(_, _) => vec![],
-            DataType::List(field) => {
-                vec![Arc::new(Self::new_empty(field.data_type()))]
-            }
+            DataType::List(field) => vec![Arc::new(Self::new_empty(field.data_type()))],
             DataType::FixedSizeList(field, _) => {
                 vec![Arc::new(Self::new_empty(field.data_type()))]
             }

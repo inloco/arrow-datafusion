@@ -188,14 +188,13 @@ impl LevelInfo {
                     | DataType::LargeBinary
                     | DataType::Utf8
                     | DataType::LargeUtf8
-                    | DataType::Dictionary(_, _) => {
-                        vec![list_level.calculate_child_levels(
+                    | DataType::Dictionary(_, _) => vec![list_level
+                        .calculate_child_levels(
                             child_offsets,
                             child_mask,
                             false,
                             list_field.is_nullable(),
-                        )]
-                    }
+                        )],
                     DataType::FixedSizeBinary(_) => unimplemented!(),
                     DataType::Decimal(_, _) => unimplemented!(),
                     DataType::List(_) | DataType::LargeList(_) | DataType::Struct(_) => {
@@ -626,9 +625,7 @@ impl LevelInfo {
             }
             DataType::FixedSizeBinary(_)
             | DataType::FixedSizeList(_, _)
-            | DataType::Union(_) => {
-                unimplemented!("Getting offsets not yet implemented")
-            }
+            | DataType::Union(_) => unimplemented!("Getting offsets not yet implemented"),
         }
     }
 

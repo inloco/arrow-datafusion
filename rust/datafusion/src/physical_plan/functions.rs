@@ -135,6 +135,8 @@ pub enum BuiltinScalarFunction {
     Array,
     /// SQL NULLIF()
     NullIf,
+    /// Convert timezone
+    ConvertTz,
     /// Date truncate
     DateTrunc,
     /// MD5
@@ -187,6 +189,7 @@ impl FromStr for BuiltinScalarFunction {
             "rtrim" => BuiltinScalarFunction::Rtrim,
             "upper" => BuiltinScalarFunction::Upper,
             "to_timestamp" => BuiltinScalarFunction::ToTimestamp,
+            "convert_tz" => BuiltinScalarFunction::ConvertTz,
             "date_trunc" => BuiltinScalarFunction::DateTrunc,
             "array" => BuiltinScalarFunction::Array,
             "nullif" => BuiltinScalarFunction::NullIf,
@@ -293,6 +296,9 @@ pub fn return_type(
             Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
         }
         BuiltinScalarFunction::DateTrunc => {
+            Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
+        }
+        BuiltinScalarFunction::ConvertTz => {
             Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
         }
         BuiltinScalarFunction::Array => Ok(DataType::FixedSizeList(
@@ -474,6 +480,9 @@ pub fn create_physical_expr(
         BuiltinScalarFunction::DateTrunc => {
             |args| Ok(Arc::new(datetime_expressions::date_trunc(args)?))
         }
+        BuiltinScalarFunction::ConvertTz => {
+            |args| Ok(args[0].clone()) // TODO
+        }
         BuiltinScalarFunction::Array => |args| Ok(array_expressions::array(args)?),
     });
     // coerce
@@ -516,6 +525,10 @@ fn signature(fun: &BuiltinScalarFunction) -> Signature {
         BuiltinScalarFunction::DateTrunc => Signature::Exact(vec![
             DataType::Utf8,
             DataType::Timestamp(TimeUnit::Nanosecond, None),
+        ]),
+        BuiltinScalarFunction::ConvertTz => Signature::Exact(vec![
+            DataType::Timestamp(TimeUnit::Nanosecond, None),
+            DataType::Utf8,
         ]),
         BuiltinScalarFunction::Array => {
             Signature::Variadic(array_expressions::SUPPORTED_ARRAY_TYPES.to_vec())
