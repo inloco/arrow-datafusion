@@ -708,6 +708,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 Ok(n) => Ok(lit(n)),
                 Err(_) => Ok(lit(n.parse::<f64>().unwrap())),
             },
+            SQLExpr::Value(Value::Boolean(b)) => Ok(lit(*b)),
             SQLExpr::Value(Value::SingleQuotedString(ref s)) => Ok(lit(s.clone())),
 
             SQLExpr::Value(Value::Null) => Ok(Expr::Literal(ScalarValue::Utf8(None))),
