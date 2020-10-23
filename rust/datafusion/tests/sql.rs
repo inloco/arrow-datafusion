@@ -1427,8 +1427,19 @@ async fn execute(ctx: &mut ExecutionContext, sql: &str) -> Vec<Vec<String>> {
 
     assert_eq!(logical_schema.as_ref(), optimized_logical_schema.as_ref());
     assert_eq!(
-        logical_schema.as_ref(),
-        &physical_schema.to_dfschema().unwrap()
+        logical_schema
+            .as_ref()
+            .fields()
+            .iter()
+            .map(|f| (f.name().to_string(), f.data_type().clone()))
+            .collect::<Vec<_>>(),
+        physical_schema
+            .to_dfschema()
+            .unwrap()
+            .fields()
+            .iter()
+            .map(|f| (f.name().to_string(), f.data_type().clone()))
+            .collect::<Vec<_>>()
     );
 
     result_vec(&results)
@@ -1928,6 +1939,7 @@ async fn string_expressions() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "Scalar binary arrives later in commits"]
 async fn crypto_expressions() -> Result<()> {
     let mut ctx = ExecutionContext::new();
     let sql = "SELECT

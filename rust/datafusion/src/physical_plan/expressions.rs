@@ -2590,6 +2590,30 @@ pub fn cast(
     }
 }
 
+/// Evaluated Literal as an array for purpose of scalar evaluation optimizations
+#[derive(Debug)]
+pub struct ConstArray {
+    value: ScalarValue,
+}
+
+impl ConstArray {
+    /// Evaluate PhysicalExpr for a single row dummy batch
+    pub fn evaluate(expr: Arc<dyn PhysicalExpr>) -> Result<Arc<dyn PhysicalExpr>> {
+        // This is a dummy array. Consider using special batch implementation?
+        let array = Int32Array::from(vec![1]);
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, true)])),
+            vec![Arc::new(array)],
+        )?;
+        let value = expr.evaluate(&batch)?;
+        let scalar = match value {
+            ColumnarValue::Scalar(value) => value,
+            ColumnarValue::Array(a) => ScalarValue::try_from_array(&a, 0)?,
+        };
+        Ok(Arc::new(Literal::new(scalar)))
+    }
+}
+
 /// Represents a non-null literal value
 #[derive(Debug)]
 pub struct Literal {
