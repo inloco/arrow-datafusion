@@ -48,6 +48,7 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use fmt::{Debug, Formatter};
+use serde_derive::{Deserialize, Serialize};
 use std::{any::Any, fmt, str::FromStr, sync::Arc};
 
 /// A function's signature, which defines the function's supported argument types.
@@ -79,7 +80,7 @@ pub type ReturnTypeFunction =
     Arc<dyn Fn(&[DataType]) -> Result<Arc<DataType>> + Send + Sync>;
 
 /// Enum of all built-in scalar functions
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BuiltinScalarFunction {
     /// sqrt
     Sqrt,
