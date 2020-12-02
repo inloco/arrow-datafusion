@@ -35,6 +35,7 @@ use arrow::record_batch::RecordBatch;
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
 
+use crate::logical_plan::DFSchemaRef;
 use async_trait::async_trait;
 
 /// Limit execution plan
@@ -76,7 +77,7 @@ impl ExecutionPlan for GlobalLimitExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.input.schema()
     }
 
@@ -163,7 +164,7 @@ impl ExecutionPlan for LocalLimitExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.input.schema()
     }
 

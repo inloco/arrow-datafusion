@@ -26,6 +26,7 @@ use crate::logical_plan::{
     Expr, LogicalPlan, Operator, Partitioning, PlanType, Recursion, StringifiedPlan,
     ToDFSchema,
 };
+use crate::physical_plan::expressions::Column;
 use crate::prelude::{col, lit};
 use crate::scalar::ScalarValue;
 use crate::{
@@ -57,8 +58,9 @@ struct ColumnNameVisitor<'a> {
 impl ExpressionVisitor for ColumnNameVisitor<'_> {
     fn pre_visit(self, expr: &Expr) -> Result<Recursion<Self>> {
         match expr {
-            Expr::Column(name) => {
-                self.accum.insert(name.clone());
+            Expr::Column(name, alias) => {
+                self.accum
+                    .insert(Column::new_with_alias(name, alias.clone()).full_name());
             }
             Expr::ScalarVariable(var_names) => {
                 self.accum.insert(var_names.join("."));
@@ -287,7 +289,7 @@ pub fn expr_sub_expressions(expr: &Expr) -> Result<Vec<Expr>> {
             Ok(expr_list)
         }
         Expr::Cast { expr, .. } => Ok(vec![expr.as_ref().to_owned()]),
-        Expr::Column(_) => Ok(vec![]),
+        Expr::Column(_, _) => Ok(vec![]),
         Expr::Alias(expr, ..) => Ok(vec![expr.as_ref().to_owned()]),
         Expr::Literal(_) => Ok(vec![]),
         Expr::ScalarVariable(_) => Ok(vec![]),
@@ -388,7 +390,7 @@ pub fn rewrite_expression(expr: &Expr, expressions: &Vec<Expr>) -> Result<Expr> 
         }
         Expr::Not(_) => Ok(Expr::Not(Box::new(expressions[0].clone()))),
         Expr::Negative(_) => Ok(Expr::Negative(Box::new(expressions[0].clone()))),
-        Expr::Column(_) => Ok(expr.clone()),
+        Expr::Column(_, _) => Ok(expr.clone()),
         Expr::Literal(_) => Ok(expr.clone()),
         Expr::ScalarVariable(_) => Ok(expr.clone()),
         Expr::Sort {

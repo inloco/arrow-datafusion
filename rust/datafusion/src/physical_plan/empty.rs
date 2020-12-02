@@ -29,6 +29,7 @@ use arrow::record_batch::RecordBatch;
 
 use super::SendableRecordBatchStream;
 
+use crate::logical_plan::{DFSchemaRef, ToDFSchema};
 use async_trait::async_trait;
 
 /// Execution plan for empty relation (produces no rows)
@@ -37,7 +38,7 @@ pub struct EmptyExec {
     /// Specifies whether this exec produces a row or not
     produce_one_row: bool,
     /// The schema for the produced row
-    schema: SchemaRef,
+    schema: DFSchemaRef,
 }
 
 impl EmptyExec {
@@ -45,7 +46,7 @@ impl EmptyExec {
     pub fn new(produce_one_row: bool, schema: SchemaRef) -> Self {
         EmptyExec {
             produce_one_row,
-            schema,
+            schema: schema.to_dfschema_ref().unwrap(),
         }
     }
 
@@ -62,7 +63,7 @@ impl ExecutionPlan for EmptyExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.schema.clone()
     }
 
@@ -84,7 +85,10 @@ impl ExecutionPlan for EmptyExec {
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         match children.len() {
-            0 => Ok(Arc::new(EmptyExec::new(false, self.schema.clone()))),
+            0 => Ok(Arc::new(Self {
+                produce_one_row: false,
+                schema: self.schema.clone(),
+            })),
             _ => Err(DataFusionError::Internal(
                 "EmptyExec wrong number of children".to_string(),
             )),
@@ -116,7 +120,7 @@ impl ExecutionPlan for EmptyExec {
 
         Ok(Box::pin(MemoryStream::try_new(
             data,
-            self.schema.clone(),
+            self.schema.to_schema_ref(),
             None,
         )?))
     }
@@ -133,7 +137,7 @@ mod tests {
         let schema = test::aggr_test_schema();
 
         let empty = EmptyExec::new(false, schema.clone());
-        assert_eq!(empty.schema(), schema);
+        assert_eq!(empty.schema().to_schema_ref(), schema);
 
         // we should have no results
         let iter = empty.execute(0).await?;

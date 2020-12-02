@@ -58,6 +58,7 @@ use parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use tokio::task;
 
 use crate::datasource::datasource::Statistics;
+use crate::logical_plan::{DFSchemaRef, ToDFSchema};
 use async_trait::async_trait;
 use futures::stream::Stream;
 
@@ -67,7 +68,7 @@ pub struct ParquetExec {
     /// Parquet partitions to read
     partitions: Vec<ParquetPartition>,
     /// Schema after projection is applied
-    schema: SchemaRef,
+    schema: DFSchemaRef,
     /// Projection for which columns to load
     projection: Vec<usize>,
     /// Batch size
@@ -237,7 +238,7 @@ impl ParquetExec {
         };
         Self {
             partitions,
-            schema: Arc::new(projected_schema),
+            schema: projected_schema.to_dfschema_ref().unwrap(),
             projection,
             predicate_builder,
             batch_size,
@@ -315,7 +316,7 @@ impl RowGroupPredicateBuilder {
         };
         let predicate_expr = DefaultPhysicalPlanner::default().create_physical_expr(
             &logical_predicate_expr,
-            &stat_schema,
+            &stat_schema.to_dfschema()?,
             &execution_context_state,
         )?;
         // println!(
@@ -543,9 +544,9 @@ fn rewrite_column_expr(
         .map(|e| rewrite_column_expr(e, column_old_name, column_new_name))
         .collect::<Result<Vec<_>>>()?;
 
-    if let Expr::Column(name) = expr {
+    if let Expr::Column(name, alias) = expr {
         if name == column_old_name {
-            return Ok(Expr::Column(column_new_name.to_string()));
+            return Ok(Expr::Column(column_new_name.to_string(), alias.clone()));
         }
     }
     utils::rewrite_expression(&expr, &expressions)
@@ -737,7 +738,7 @@ impl ExecutionPlan for ParquetExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.schema.clone()
     }
 
@@ -791,7 +792,7 @@ impl ExecutionPlan for ParquetExec {
         });
 
         Ok(Box::pin(ParquetStream {
-            schema: self.schema.clone(),
+            schema: self.schema.to_schema_ref(),
             response_rx,
         }))
     }

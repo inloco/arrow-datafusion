@@ -19,7 +19,7 @@
 
 use crate::datasource::{MemTable, TableProvider};
 use crate::error::Result;
-use crate::logical_plan::{LogicalPlan, LogicalPlanBuilder};
+use crate::logical_plan::{DFSchema, LogicalPlan, LogicalPlanBuilder};
 use arrow::array::{self, Int32Array};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
@@ -150,7 +150,7 @@ pub fn build_table_i32(
 }
 
 /// Returns the column names on the schema
-pub fn columns(schema: &Schema) -> Vec<String> {
+pub fn columns(schema: &DFSchema) -> Vec<String> {
     schema.fields().iter().map(|f| f.name().clone()).collect()
 }
 

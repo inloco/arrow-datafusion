@@ -40,6 +40,7 @@ use crate::physical_plan::ExecutionPlan;
 use crate::physical_plan::Partitioning;
 
 use super::SendableRecordBatchStream;
+use crate::logical_plan::DFSchemaRef;
 use pin_project_lite::pin_project;
 
 /// Merge execution plan executes partitions in parallel and combines them into a single
@@ -69,7 +70,7 @@ impl ExecutionPlan for MergeExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.input.schema()
     }
 
@@ -146,7 +147,7 @@ impl ExecutionPlan for MergeExec {
 
                 Ok(Box::pin(MergeStream {
                     input: receiver,
-                    schema: self.schema(),
+                    schema: self.schema().to_schema_ref(),
                 }))
             }
         }
@@ -200,7 +201,7 @@ impl ExecutionPlan for UnionExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.inputs[0].schema()
     }
 

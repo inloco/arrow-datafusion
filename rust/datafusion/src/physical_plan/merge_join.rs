@@ -36,6 +36,7 @@ use super::{
 use crate::error::{DataFusionError, Result};
 
 use super::{ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream};
+use crate::logical_plan::DFSchemaRef;
 use arrow::compute::kernels::merge::{merge_join_indices, MergeJoinType};
 use arrow::compute::{concat, take};
 use std::task::Poll;
@@ -53,7 +54,7 @@ pub struct MergeJoinExec {
     /// How the join is performed
     join_type: JoinType,
     /// The schema once the join is applied
-    schema: SchemaRef,
+    schema: DFSchemaRef,
 }
 
 impl MergeJoinExec {
@@ -75,7 +76,7 @@ impl MergeJoinExec {
             &right_schema,
             on,
             &join_type,
-        ));
+        )?);
 
         let on = on
             .iter()
@@ -98,7 +99,7 @@ impl ExecutionPlan for MergeJoinExec {
         self
     }
 
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> DFSchemaRef {
         self.schema.clone()
     }
 
@@ -145,7 +146,7 @@ impl ExecutionPlan for MergeJoinExec {
         let on_right = self.on.iter().map(|on| on.1.clone()).collect::<Vec<_>>();
 
         Ok(Box::pin(MergeJoinStream {
-            schema: self.schema.clone(),
+            schema: self.schema.to_schema_ref(),
             on_left,
             on_right,
             join_type: self.join_type,
@@ -424,8 +425,9 @@ fn merge_join(
 mod tests {
 
     use crate::{
+        assert_batches_eq,
         physical_plan::{common, memory::MemoryExec},
-        test::{build_table_i32, columns, format_batch},
+        test::{build_table_i32, columns},
     };
 
     use super::*;
@@ -462,13 +464,6 @@ mod tests {
         MergeJoinExec::try_new(left, right, &on, join_type)
     }
 
-    fn assert_same_rows(result: &[String], expected: &[&str]) {
-        let result = result.iter().map(|s| s.clone()).collect::<Vec<_>>();
-
-        let expected = expected.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(result, expected);
-    }
-
     #[tokio::test]
     async fn join_one() -> Result<()> {
         let left = build_table(
@@ -491,13 +486,16 @@ mod tests {
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
-        let result = format_batch(&batches[0]);
-        let expected = vec!["1,4,7,10,70"];
-        assert_same_rows(&result, &expected);
-
-        let result = format_batch(&batches[1]);
-        let expected = vec!["2,5,8,20,80", "3,5,9,20,80"];
-        assert_same_rows(&result, &expected);
+        let expected = vec![
+            "+----+----+----+----+----+",
+            "| a1 | b1 | c1 | a2 | c2 |",
+            "+----+----+----+----+----+",
+            "| 1  | 4  | 7  | 10 | 70 |",
+            "| 2  | 5  | 8  | 20 | 80 |",
+            "| 3  | 5  | 9  | 20 | 80 |",
+            "+----+----+----+----+----+",
+        ];
+        assert_batches_eq!(expected, &batches);
 
         Ok(())
     }
@@ -524,13 +522,17 @@ mod tests {
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
-        let result = format_batch(&batches[0]);
-        let expected = vec!["1,4,7,10,4,70"];
-        assert_same_rows(&result, &expected);
+        let expected = vec![
+            "+----+----+----+----+----+----+",
+            "| a1 | b1 | c1 | a2 | b2 | c2 |",
+            "+----+----+----+----+----+----+",
+            "| 1  | 4  | 7  | 10 | 4  | 70 |",
+            "| 2  | 5  | 8  | 20 | 5  | 80 |",
+            "| 3  | 5  | 9  | 20 | 5  | 80 |",
+            "+----+----+----+----+----+----+",
+        ];
 
-        let result = format_batch(&batches[1]);
-        let expected = vec!["2,5,8,20,5,80", "3,5,9,20,5,80"];
-        assert_same_rows(&result, &expected);
+        assert_batches_eq!(expected, &batches);
 
         Ok(())
     }
@@ -556,15 +558,18 @@ mod tests {
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
-        assert_eq!(batches.len(), 2);
 
-        let result = format_batch(&batches[0]);
-        let expected = vec!["1,1,7,70"];
-        assert_same_rows(&result, &expected);
+        let expected = vec![
+            "+----+----+----+----+",
+            "| a1 | b2 | c1 | c2 |",
+            "+----+----+----+----+",
+            "| 1  | 1  | 7  | 70 |",
+            "| 2  | 2  | 8  | 80 |",
+            "| 2  | 2  | 9  | 80 |",
+            "+----+----+----+----+",
+        ];
 
-        let result = format_batch(&batches[1]);
-        let expected = vec!["2,2,8,80", "2,2,9,80"];
-        assert_same_rows(&result, &expected);
+        assert_batches_eq!(expected, &batches);
 
         Ok(())
     }
@@ -590,11 +595,19 @@ mod tests {
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
-        assert_eq!(batches.len(), 1);
 
-        let result = format_batch(&batches[0]);
-        let expected = vec!["1,1,7,70", "2,2,8,80", "2,2,9,80", "3,3,2,NULL"];
-        assert_same_rows(&result, &expected);
+        let expected = vec![
+            "+----+----+----+----+",
+            "| a1 | b2 | c1 | c2 |",
+            "+----+----+----+----+",
+            "| 1  | 1  | 7  | 70 |",
+            "| 2  | 2  | 8  | 80 |",
+            "| 2  | 2  | 9  | 80 |",
+            "| 3  | 3  | 2  |    |",
+            "+----+----+----+----+",
+        ];
+
+        assert_batches_eq!(expected, &batches);
 
         Ok(())
     }
@@ -628,17 +641,18 @@ mod tests {
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
-        assert_eq!(batches.len(), 2);
 
-        let result = format_batch(&batches[0]);
-        let expected = vec!["1,1,7,70"];
+        let expected = vec![
+            "+----+----+----+----+",
+            "| a1 | b2 | c1 | c2 |",
+            "+----+----+----+----+",
+            "| 1  | 1  | 7  | 70 |",
+            "| 2  | 2  | 8  | 80 |",
+            "| 2  | 2  | 9  | 80 |",
+            "+----+----+----+----+",
+        ];
 
-        assert_same_rows(&result, &expected);
-
-        let result = format_batch(&batches[1]);
-        let expected = vec!["2,2,8,80", "2,2,9,80"];
-
-        assert_same_rows(&result, &expected);
+        assert_batches_eq!(expected, &batches);
 
         Ok(())
     }
@@ -674,15 +688,20 @@ mod tests {
         // first part
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
-        assert_eq!(batches.len(), 2);
 
-        let result = format_batch(&batches[0]);
-        let expected = vec!["1,4,7,10,70"];
-        assert_same_rows(&result, &expected);
+        let expected = vec![
+            "+----+----+----+----+----+",
+            "| a1 | b1 | c1 | a2 | c2 |",
+            "+----+----+----+----+----+",
+            "| 1  | 4  | 7  | 10 | 70 |",
+            "| 2  | 5  | 8  | 20 | 80 |",
+            "| 2  | 5  | 8  | 30 | 90 |",
+            "| 3  | 5  | 9  | 20 | 80 |",
+            "| 3  | 5  | 9  | 30 | 90 |",
+            "+----+----+----+----+----+",
+        ];
 
-        let result = format_batch(&batches[1]);
-        let expected = vec!["2,5,8,20,80", "2,5,8,30,90", "3,5,9,20,80", "3,5,9,30,90"];
-        assert_same_rows(&result, &expected);
+        assert_batches_eq!(expected, &batches);
 
         Ok(())
     }
@@ -734,29 +753,26 @@ mod tests {
         // first part
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
-        assert_eq!(batches.len(), 3);
 
-        let result = format_batch(&batches[0]);
-        let expected = vec!["1,4,7,10,70"];
-        assert_same_rows(&result, &expected);
-
-        let result = format_batch(&batches[1]);
         let expected = vec![
-            "2,5,8,20,80",
-            "2,5,8,120,180",
-            "2,5,8,30,90",
-            "3,5,9,20,80",
-            "3,5,9,120,180",
-            "3,5,9,30,90",
-            "2,5,1,20,80",
-            "2,5,1,120,180",
-            "2,5,1,30,90",
+            "+----+----+----+-----+-----+",
+            "| a1 | b1 | c1 | a2  | c2  |",
+            "+----+----+----+-----+-----+",
+            "| 1  | 4  | 7  | 10  | 70  |",
+            "| 2  | 5  | 8  | 20  | 80  |",
+            "| 2  | 5  | 8  | 120 | 180 |",
+            "| 2  | 5  | 8  | 30  | 90  |",
+            "| 3  | 5  | 9  | 20  | 80  |",
+            "| 3  | 5  | 9  | 120 | 180 |",
+            "| 3  | 5  | 9  | 30  | 90  |",
+            "| 2  | 5  | 1  | 20  | 80  |",
+            "| 2  | 5  | 1  | 120 | 180 |",
+            "| 2  | 5  | 1  | 30  | 90  |",
+            "| 3  | 6  | 9  | 40  | 100 |",
+            "+----+----+----+-----+-----+",
         ];
-        assert_same_rows(&result, &expected);
 
-        let result = format_batch(&batches[2]);
-        let expected = vec!["3,6,9,40,100"];
-        assert_same_rows(&result, &expected);
+        assert_batches_eq!(expected, &batches);
 
         Ok(())
     }
