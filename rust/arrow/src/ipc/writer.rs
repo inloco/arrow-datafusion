@@ -924,6 +924,7 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "Int64Decimal"]
     fn test_write_null_file_v4() {
         write_null_file(
             IpcWriteOptions::try_new(8, false, MetadataVersion::V4).unwrap(),
@@ -956,6 +957,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Int64Decimal"]
     fn read_and_rewrite_generated_files_014() {
         let testdata = crate::util::test_util::arrow_test_data();
         let version = "0.14.1";
@@ -1007,6 +1009,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Int64Decimal"]
     fn read_and_rewrite_generated_streams_014() {
         let testdata = crate::util::test_util::arrow_test_data();
         let version = "0.14.1";

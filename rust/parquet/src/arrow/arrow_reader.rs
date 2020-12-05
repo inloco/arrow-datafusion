@@ -403,6 +403,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Cube Store"]
     fn test_read_decimal_file() {
         use arrow::array::DecimalArray;
         let testdata = arrow::util::test_util::parquet_test_data();
