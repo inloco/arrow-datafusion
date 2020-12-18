@@ -920,41 +920,6 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 })
             }
 
-            SQLExpr::InList {
-                expr,
-                list,
-                negated,
-            } => {
-                let items = list
-                    .iter()
-                    .map(|right| -> Result<_> {
-                        Ok(Expr::BinaryExpr {
-                            left: Box::new(self.sql_expr_to_logical_expr(&expr)?),
-                            op: Operator::Eq,
-                            right: Box::new(self.sql_expr_to_logical_expr(&right)?),
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                let result = if items.is_empty() {
-                    lit(false)
-                } else if items.len() == 1 {
-                    items.into_iter().next().unwrap()
-                } else {
-                    let mut iter = items.into_iter();
-                    let first = iter.next().unwrap();
-                    iter.fold(first, |a, b| Expr::BinaryExpr {
-                        left: Box::new(a),
-                        op: Operator::Or,
-                        right: Box::new(b),
-                    })
-                };
-                Ok(if *negated {
-                    Expr::Not(Box::new(result))
-                } else {
-                    result
-                })
-            }
-
             SQLExpr::Function(function) => {
                 // TODO parser should do lowercase?
                 let name: String = function.name.to_string().to_lowercase();

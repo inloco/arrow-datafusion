@@ -39,7 +39,9 @@ use arrow::{
 use arrow::{
     array::{
         ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-        Int8Array, StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+        Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array, Int64Decimal2Array,
+        Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array, Int8Array,
+        StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     compute,
 };
@@ -841,6 +843,28 @@ fn create_batch_from_map(
                         Arc::new(StringArray::from(vec![&***str]))
                     }
                     GroupByScalar::Boolean(b) => Arc::new(BooleanArray::from(vec![*b])),
+                    GroupByScalar::Int64Decimal(n, 0) => {
+                        Arc::new(Int64Decimal0Array::from(vec![*n]))
+                    }
+                    GroupByScalar::Int64Decimal(n, 1) => {
+                        Arc::new(Int64Decimal1Array::from(vec![*n]))
+                    }
+                    GroupByScalar::Int64Decimal(n, 2) => {
+                        Arc::new(Int64Decimal2Array::from(vec![*n]))
+                    }
+                    GroupByScalar::Int64Decimal(n, 3) => {
+                        Arc::new(Int64Decimal3Array::from(vec![*n]))
+                    }
+                    GroupByScalar::Int64Decimal(n, 4) => {
+                        Arc::new(Int64Decimal4Array::from(vec![*n]))
+                    }
+                    GroupByScalar::Int64Decimal(n, 5) => {
+                        Arc::new(Int64Decimal5Array::from(vec![*n]))
+                    }
+                    GroupByScalar::Int64Decimal(n, 10) => {
+                        Arc::new(Int64Decimal10Array::from(vec![*n]))
+                    }
+                    GroupByScalar::Int64Decimal(_, _) => unreachable!(),
                     GroupByScalar::TimeMicrosecond(n) => {
                         Arc::new(TimestampMicrosecondArray::from(vec![*n]))
                     }
@@ -981,6 +1005,34 @@ pub(crate) fn create_group_by_values(
                     .downcast_ref::<TimestampNanosecondArray>()
                     .unwrap();
                 vec[i] = GroupByScalar::TimeNanosecond(array.value(row))
+            }
+            DataType::Int64Decimal(0) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal0Array>().unwrap();
+                vec[i] = GroupByScalar::Int64Decimal(array.value(row), 0)
+            }
+            DataType::Int64Decimal(1) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal1Array>().unwrap();
+                vec[i] = GroupByScalar::Int64Decimal(array.value(row), 1)
+            }
+            DataType::Int64Decimal(2) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal2Array>().unwrap();
+                vec[i] = GroupByScalar::Int64Decimal(array.value(row), 2)
+            }
+            DataType::Int64Decimal(3) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal3Array>().unwrap();
+                vec[i] = GroupByScalar::Int64Decimal(array.value(row), 3)
+            }
+            DataType::Int64Decimal(4) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal4Array>().unwrap();
+                vec[i] = GroupByScalar::Int64Decimal(array.value(row), 4)
+            }
+            DataType::Int64Decimal(5) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal5Array>().unwrap();
+                vec[i] = GroupByScalar::Int64Decimal(array.value(row), 5)
+            }
+            DataType::Int64Decimal(10) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal10Array>().unwrap();
+                vec[i] = GroupByScalar::Int64Decimal(array.value(row), 10)
             }
             _ => {
                 // This is internal because we should have caught this before.

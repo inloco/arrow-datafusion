@@ -41,6 +41,7 @@ pub(crate) enum GroupByScalar {
     Boolean(bool),
     TimeMicrosecond(i64),
     TimeNanosecond(i64),
+    Int64Decimal(i64, u8),
 }
 
 impl TryFrom<&ScalarValue> for GroupByScalar {
@@ -65,6 +66,9 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
             ScalarValue::UInt32(Some(v)) => GroupByScalar::UInt32(*v),
             ScalarValue::UInt64(Some(v)) => GroupByScalar::UInt64(*v),
             ScalarValue::Utf8(Some(v)) => GroupByScalar::Utf8(Box::new(v.clone())),
+            ScalarValue::Int64Decimal(Some(v), size) => {
+                GroupByScalar::Int64Decimal(*v, *size)
+            }
             ScalarValue::Float32(None)
             | ScalarValue::Float64(None)
             | ScalarValue::Boolean(None)
@@ -76,7 +80,14 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
             | ScalarValue::UInt16(None)
             | ScalarValue::UInt32(None)
             | ScalarValue::UInt64(None)
-            | ScalarValue::Utf8(None) => {
+            | ScalarValue::Utf8(None)
+            | ScalarValue::Int64Decimal(None, 0)
+            | ScalarValue::Int64Decimal(None, 1)
+            | ScalarValue::Int64Decimal(None, 2)
+            | ScalarValue::Int64Decimal(None, 3)
+            | ScalarValue::Int64Decimal(None, 4)
+            | ScalarValue::Int64Decimal(None, 5)
+            | ScalarValue::Int64Decimal(None, 10) => {
                 return Err(DataFusionError::Internal(format!(
                     "Cannot convert a ScalarValue holding NULL ({:?})",
                     scalar_value
@@ -110,6 +121,9 @@ impl From<&GroupByScalar> for ScalarValue {
             GroupByScalar::Utf8(v) => ScalarValue::Utf8(Some(v.to_string())),
             GroupByScalar::TimeMicrosecond(v) => ScalarValue::TimeMicrosecond(Some(*v)),
             GroupByScalar::TimeNanosecond(v) => ScalarValue::TimeNanosecond(Some(*v)),
+            GroupByScalar::Int64Decimal(v, size) => {
+                ScalarValue::Int64Decimal(Some(*v), *size)
+            }
         }
     }
 }
