@@ -116,8 +116,15 @@ impl HashJoinExec {
 
         let on = on
             .iter()
-            .map(|(l, r)| (l.to_string(), r.to_string()))
-            .collect();
+            .map(|(l, r)| -> Result<_> {
+                Ok((
+                    left_schema.lookup_field_by_string_name(l)?.qualified_name(),
+                    right_schema
+                        .lookup_field_by_string_name(r)?
+                        .qualified_name(),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let random_state = RandomState::new();
 
