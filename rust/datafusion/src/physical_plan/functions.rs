@@ -678,7 +678,7 @@ mod tests {
         );
 
         // evaluate works
-        let batch = RecordBatch::try_new(Arc::new(schema.clone()), columns)?;
+        let batch = RecordBatch::try_new(Arc::new(schema), columns)?;
         let result = expr.evaluate(&batch)?.into_array(batch.num_rows());
 
         // downcast works
@@ -722,7 +722,7 @@ mod tests {
         );
 
         // evaluate works
-        let batch = RecordBatch::try_new(Arc::new(schema.clone()), columns)?;
+        let batch = RecordBatch::try_new(Arc::new(schema), columns)?;
         let result = expr.evaluate(&batch)?.into_array(batch.num_rows());
 
         // downcast works
@@ -775,7 +775,7 @@ mod tests {
         );
 
         // evaluate works
-        let batch = RecordBatch::try_new(Arc::new(schema.clone()), columns)?;
+        let batch = RecordBatch::try_new(Arc::new(schema), columns)?;
         let result = expr.evaluate(&batch)?.into_array(batch.num_rows());
 
         // downcast works
