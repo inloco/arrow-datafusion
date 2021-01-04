@@ -978,7 +978,11 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(results.len(), 0);
+
+        let expected: Vec<&str> = vec!["++", "||", "++", "++"];
+
+        assert_batches_eq!(expected, &results);
+
         Ok(())
     }
 

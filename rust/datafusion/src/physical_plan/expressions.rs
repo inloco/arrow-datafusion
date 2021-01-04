@@ -3536,6 +3536,7 @@ pub fn in_list(
 mod tests {
     use super::*;
     use crate::error::Result;
+    use crate::logical_plan::ToDFSchema;
     use arrow::datatypes::*;
     use arrow::{
         array::{
@@ -3544,7 +3545,6 @@ mod tests {
         },
         util::display::array_value_to_string,
     };
-    use crate::logical_plan::ToDFSchema;
 
     // Create a binary expression without coercion. Used here when we do not want to coerce the expressions
     // to valid types. Usage can result in an execution (after plan) error.
