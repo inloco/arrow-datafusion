@@ -269,6 +269,14 @@ impl Stream for MergeJoinStream {
         let right = right_state
             .map(|(_, batch)| Ok(batch))
             .unwrap_or_else(|| self.right.empty_batch())?;
+        // println!(
+        //     "Join on left (last: {}) at {}: {:?}",
+        //     self.left.is_last, left_cursor, left
+        // );
+        // println!(
+        //     "Join on right (last: {}) at {}: {:?}",
+        //     self.right.is_last, right_cursor, right
+        // );
         let merge_result = merge_join(
             self.schema.clone(),
             &left,
@@ -281,6 +289,8 @@ impl Stream for MergeJoinStream {
             right_cursor,
             &self.join_type,
         );
+        // println!("Join result: {:?}", merge_result);
+
         Poll::Ready(Some(merge_result.map(
             |(
                 (new_left_cursor, advance_left),
