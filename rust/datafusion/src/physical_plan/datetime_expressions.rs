@@ -341,7 +341,7 @@ pub fn convert_tz(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
                     ))
                 })?;
                 let shift = (hour * 60 + hour.signum() * minute) * 60 * 1_000_000_000;
-                Ok(timestamps.value(i) - shift)
+                Ok(timestamps.value(i) + shift)
             }
         })
         .collect::<Result<Vec<_>>>()?;
