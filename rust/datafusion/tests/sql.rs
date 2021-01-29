@@ -2000,6 +2000,7 @@ async fn in_list_array() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "Naive IN list or implementation"]
 async fn in_list_scalar() -> Result<()> {
     let mut ctx = ExecutionContext::new();
     let sql = "SELECT
