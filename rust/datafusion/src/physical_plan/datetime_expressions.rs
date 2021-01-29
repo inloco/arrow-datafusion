@@ -294,6 +294,71 @@ pub fn date_trunc(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
     Ok(TimestampNanosecondArray::from(Arc::new(data)))
 }
 
+/// convert_tz SQL function
+pub fn convert_tz(args: &[ArrayRef]) -> Result<TimestampNanosecondArray> {
+    let timestamps = &args[0]
+        .as_any()
+        .downcast_ref::<TimestampNanosecondArray>()
+        .ok_or_else(|| {
+            DataFusionError::Execution(
+                "Could not cast convert_tz timestamp input to TimestampNanosecondArray"
+                    .to_string(),
+            )
+        })?;
+
+    let shift = &args[1]
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| {
+            DataFusionError::Execution(
+                "Could not cast convert_tz shift input to StringArray".to_string(),
+            )
+        })?;
+
+    let range = 0..timestamps.len();
+    let result = range
+        .map(|i| {
+            if timestamps.is_null(i) {
+                Ok(0_i64)
+            } else {
+                let hour_min = shift.value(i).split(':').collect::<Vec<_>>();
+                if hour_min.len() != 2 {
+                    return Err(DataFusionError::Execution(format!(
+                        "Can't parse timezone shift '{}'",
+                        shift.value(i)
+                    )));
+                }
+                let hour = hour_min[0].parse::<i64>().map_err(|e| {
+                    DataFusionError::Execution(format!(
+                        "Can't parse hours of timezone shift '{}': {}",
+                        hour_min[0], e
+                    ))
+                })?;
+                let minute = hour_min[1].parse::<i64>().map_err(|e| {
+                    DataFusionError::Execution(format!(
+                        "Can't parse minutes of timezone shift '{}': {}",
+                        hour_min[1], e
+                    ))
+                })?;
+                let shift = (hour * 60 + hour.signum() * minute) * 60 * 1_000_000_000;
+                Ok(timestamps.value(i) - shift)
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let data = ArrayData::new(
+        DataType::Timestamp(TimeUnit::Nanosecond, None),
+        timestamps.len(),
+        Some(timestamps.null_count()),
+        timestamps.data().null_buffer().cloned(),
+        0,
+        vec![Buffer::from(result.to_byte_slice())],
+        vec![],
+    );
+
+    Ok(TimestampNanosecondArray::from(Arc::new(data)))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

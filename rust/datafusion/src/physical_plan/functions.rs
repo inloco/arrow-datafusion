@@ -483,7 +483,7 @@ pub fn create_physical_expr(
             |args| Ok(Arc::new(datetime_expressions::date_trunc(args)?))
         }
         BuiltinScalarFunction::ConvertTz => {
-            |args| Ok(args[0].clone()) // TODO
+            |args| Ok(Arc::new(datetime_expressions::convert_tz(args)?))
         }
         BuiltinScalarFunction::Array => |args| Ok(array_expressions::array(args)?),
     });
