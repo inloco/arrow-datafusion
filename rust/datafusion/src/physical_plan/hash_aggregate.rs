@@ -456,6 +456,34 @@ pub(crate) fn create_key(
                 let array = col.as_any().downcast_ref::<Int64Array>().unwrap();
                 vec.extend_from_slice(&array.value(row).to_le_bytes());
             }
+            DataType::Int64Decimal(0) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal0Array>().unwrap();
+                vec.extend_from_slice(&array.value(row).to_le_bytes());
+            }
+            DataType::Int64Decimal(1) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal1Array>().unwrap();
+                vec.extend_from_slice(&array.value(row).to_le_bytes());
+            }
+            DataType::Int64Decimal(2) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal2Array>().unwrap();
+                vec.extend_from_slice(&array.value(row).to_le_bytes());
+            }
+            DataType::Int64Decimal(3) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal3Array>().unwrap();
+                vec.extend_from_slice(&array.value(row).to_le_bytes());
+            }
+            DataType::Int64Decimal(4) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal4Array>().unwrap();
+                vec.extend_from_slice(&array.value(row).to_le_bytes());
+            }
+            DataType::Int64Decimal(5) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal5Array>().unwrap();
+                vec.extend_from_slice(&array.value(row).to_le_bytes());
+            }
+            DataType::Int64Decimal(10) => {
+                let array = col.as_any().downcast_ref::<Int64Decimal10Array>().unwrap();
+                vec.extend_from_slice(&array.value(row).to_le_bytes());
+            }
             DataType::Timestamp(TimeUnit::Microsecond, None) => {
                 let array = col
                     .as_any()
