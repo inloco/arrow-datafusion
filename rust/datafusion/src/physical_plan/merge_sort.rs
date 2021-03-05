@@ -56,7 +56,9 @@ impl MergeSortExec {
     /// Create a new sort execution plan
     pub fn try_new(input: Arc<dyn ExecutionPlan>, columns: Vec<String>) -> Result<Self> {
         if columns.is_empty() {
-            return Err(DataFusionError::Internal("Empty columns passed for MergeSortExec".to_string()));
+            return Err(DataFusionError::Internal(
+                "Empty columns passed for MergeSortExec".to_string(),
+            ));
         }
         Ok(Self { input, columns })
     }

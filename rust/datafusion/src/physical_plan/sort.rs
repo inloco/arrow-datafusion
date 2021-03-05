@@ -36,7 +36,7 @@ use arrow::{array::ArrayRef, error::ArrowError};
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::error::{DataFusionError, Result};
-use crate::physical_plan::expressions::{PhysicalSortExpr};
+use crate::physical_plan::expressions::PhysicalSortExpr;
 use crate::physical_plan::{common, Distribution, ExecutionPlan, Partitioning};
 
 use crate::logical_plan::DFSchemaRef;
@@ -136,7 +136,6 @@ impl ExecutionPlan for SortExec {
 
         Ok(Box::pin(SortStream::new(input, self.expr.clone())))
     }
-
 
     // TODO
     // fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
