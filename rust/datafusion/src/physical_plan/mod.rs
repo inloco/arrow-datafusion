@@ -33,6 +33,7 @@ use async_trait::async_trait;
 use futures::stream::Stream;
 
 use self::merge::MergeExec;
+use smallvec::SmallVec;
 
 /// Trait for types that stream [arrow::record_batch::RecordBatch]
 pub trait RecordBatchStream: Stream<Item = ArrowResult<RecordBatch>> {
@@ -55,6 +56,19 @@ pub trait PhysicalPlanner {
         logical_plan: &LogicalPlan,
         ctx_state: &ExecutionContextState,
     ) -> Result<Arc<dyn ExecutionPlan>>;
+}
+
+/// Various hints for planning and optimizations.
+#[derive(Debug, Default)]
+pub struct OptimizerHints {
+    /// If the output is sorted, contains indices of the sort key columns in the output schema.
+    /// Each partition should meet this sort order, but order between partitions is unspecified.
+    /// Note that this does **not** guarantee the exact ordering inside each of the columns, e.g.
+    /// the values may end up in ascending or descending order, nulls can go first or last.
+    pub sort_order: Option<Vec<usize>>,
+    /// Indices of columns that will always have the same value in each row. No information about
+    /// the value is provided.
+    pub single_value_columns: Vec<usize>,
 }
 
 /// Partition-aware execution plan for a relation
@@ -81,12 +95,10 @@ pub trait ExecutionPlan: Debug + Send + Sync {
         &self,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>>;
-    /// If the output is sorted, return indices of the sort key columns in the output schema.
-    /// Useful for optimizations during planning.
-    /// Note that this does guarantee the exact ordering inside each of the columns, e.g. the values
-    /// may end up in ascending or descending order, nulls can go first or last.
-    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
-        Ok(None)
+
+    /// Provides hints to the planner and the optimizer.
+    fn output_hints(&self) -> OptimizerHints {
+        OptimizerHints::default()
     }
 
     /// creates an iterator
@@ -233,10 +245,13 @@ pub trait AggregateExpr: Send + Sync + Debug {
 /// * update its state from multiple accumulators' states via `merge`
 /// * compute the final value from its internal state via `evaluate`
 pub trait Accumulator: Send + Sync + Debug {
+    /// Return accumulator to its initial state.
+    fn reset(&mut self);
+
     /// Returns the state of the accumulator at the end of the accumulation.
     // in the case of an average on which we track `sum` and `n`, this function should return a vector
     // of two values, sum and n.
-    fn state(&self) -> Result<Vec<ScalarValue>>;
+    fn state(&self) -> Result<SmallVec<[ScalarValue; 2]>>;
 
     /// updates the accumulator's state from a vector of scalars.
     fn update(&mut self, values: &Vec<ScalarValue>) -> Result<()>;
