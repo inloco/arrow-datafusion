@@ -59,7 +59,11 @@ impl SortedAggState {
             .chain(self.processed_values.into_iter())
             .map(|mut c| c.finish())
             .collect_vec();
-        RecordBatch::try_new(schema, columns)
+        if columns.is_empty() {
+            Ok(RecordBatch::new_empty(schema))
+        } else {
+            RecordBatch::try_new(schema, columns)
+        }
     }
 
     pub fn add_batch(
