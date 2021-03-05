@@ -907,7 +907,7 @@ fn create_batch_from_map(
         .map_err(DataFusionError::into_arrow_external_error)?;
     }
     // 4.
-    let batch = if !value_columns.is_empty() {
+    let batch = if !key_columns.is_empty() || !value_columns.is_empty() {
         // 5.
         let columns = key_columns
             .into_iter()
