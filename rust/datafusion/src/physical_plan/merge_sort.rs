@@ -42,6 +42,7 @@ use crate::physical_plan::memory::MemoryStream;
 use arrow::compute::kernels::merge::merge_sort_indices;
 use async_trait::async_trait;
 use futures::future::join_all;
+use itertools::Itertools;
 
 /// Sort execution plan
 #[derive(Debug)]
@@ -54,6 +55,9 @@ pub struct MergeSortExec {
 impl MergeSortExec {
     /// Create a new sort execution plan
     pub fn try_new(input: Arc<dyn ExecutionPlan>, columns: Vec<String>) -> Result<Self> {
+        if columns.is_empty() {
+            return Err(DataFusionError::Internal("Empty columns passed for MergeSortExec".to_string()));
+        }
         Ok(Self { input, columns })
     }
 }
@@ -84,6 +88,15 @@ impl ExecutionPlan for MergeSortExec {
             children[0].clone(),
             self.columns.clone(),
         )?))
+    }
+
+    fn output_sort_order(&self) -> Result<Option<Vec<usize>>> {
+        Ok(Some(
+            self.columns
+                .iter()
+                .map(|c| self.schema().index_of(&c))
+                .try_collect()?,
+        ))
     }
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
