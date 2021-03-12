@@ -221,7 +221,8 @@ impl DefaultPhysicalPlanner {
                     .collect::<Result<Vec<_>>>()?;
 
                 let strategy = compute_aggregation_strategy(input_exec.as_ref(), &groups);
-                if input_exec.output_partitioning().partition_count() == 1 {
+                // TODO: fix cubestore planning and re-enable.
+                if false && input_exec.output_partitioning().partition_count() == 1 {
                     // A single pass is enough for 1 partition.
                     return Ok(Arc::new(HashAggregateExec::try_new(
                         strategy,
