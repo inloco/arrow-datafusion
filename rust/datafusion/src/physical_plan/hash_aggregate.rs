@@ -76,6 +76,7 @@ use itertools::Itertools;
 use smallvec::smallvec;
 use smallvec::SmallVec;
 use std::convert::TryFrom;
+use tracing_futures::{WithSubscriber, Instrument};
 
 /// Hash aggregate modes
 #[derive(Debug, Copy, Clone)]
@@ -617,7 +618,7 @@ impl GroupedHashAggregateStream {
         let (tx, rx) = futures::channel::oneshot::channel();
 
         let schema_clone = schema.clone();
-        tokio::spawn(async move {
+        let task = async move {
             let result = match strategy {
                 AggregateStrategy::Hash => {
                     compute_grouped_hash_aggregate(
@@ -627,7 +628,7 @@ impl GroupedHashAggregateStream {
                         aggr_expr,
                         input,
                     )
-                    .await
+                        .await
                 }
                 AggregateStrategy::InplaceSorted => {
                     compute_grouped_sorted_aggregate(
@@ -637,11 +638,12 @@ impl GroupedHashAggregateStream {
                         aggr_expr,
                         input,
                     )
-                    .await
+                        .await
                 }
             };
             tx.send(result)
-        });
+        };
+        tokio::spawn(task.in_current_span().with_current_subscriber());
 
         GroupedHashAggregateStream {
             schema,
@@ -803,11 +805,12 @@ impl HashAggregateStream {
         let (tx, rx) = futures::channel::oneshot::channel();
 
         let schema_clone = schema.clone();
-        tokio::spawn(async move {
+        let task = async move {
             let result =
                 compute_hash_aggregate(mode, schema_clone, aggr_expr, input).await;
             tx.send(result)
-        });
+        };
+        tokio::spawn(task.in_current_span().with_current_subscriber());
 
         HashAggregateStream {
             schema,

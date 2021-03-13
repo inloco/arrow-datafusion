@@ -43,6 +43,7 @@ use super::SendableRecordBatchStream;
 use crate::logical_plan::DFSchemaRef;
 use pin_project_lite::pin_project;
 use std::option::Option::None;
+use tracing_futures::{Instrument, WithSubscriber};
 
 /// Merge execution plan executes partitions in parallel and combines them into a single
 /// partition. No guarantees are made about the order of the resulting partition.
@@ -123,10 +124,10 @@ impl ExecutionPlan for MergeExec {
 
                 // spawn independent tasks whose resulting streams (of batches)
                 // are sent to the channel for consumption.
-                for part_i in (0..input_partitions) {
+                for part_i in 0..input_partitions {
                     let input = self.input.clone();
                     let mut sender = sender.clone();
-                    tokio::spawn(async move {
+                    let task = async move {
                         let mut stream = match input.execute(part_i).await {
                             Err(e) => {
                                 // If send fails, plan being torn
@@ -143,7 +144,8 @@ impl ExecutionPlan for MergeExec {
                             // there is no place to send the error
                             sender.send(item).await.ok();
                         }
-                    });
+                    };
+                    tokio::spawn(task.in_current_span().with_current_subscriber());
                 }
 
                 Ok(Box::pin(MergeStream {

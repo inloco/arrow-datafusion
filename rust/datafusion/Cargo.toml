@@ -68,6 +68,8 @@ md-5 = "^0.9.1"
 sha2 = "^0.9.1"
 ordered-float = "2.0"
 smallvec = "1.6.1"
+tracing = "0.1.25"
+tracing-futures = { version = "0.2.5", features = ["tokio", "tokio-executor"] }
 
 [dev-dependencies]
 rand = "0.8"
