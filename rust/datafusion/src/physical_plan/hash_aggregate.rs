@@ -76,7 +76,7 @@ use itertools::Itertools;
 use smallvec::smallvec;
 use smallvec::SmallVec;
 use std::convert::TryFrom;
-use tracing_futures::{WithSubscriber, Instrument};
+use tracing_futures::{Instrument, WithSubscriber};
 
 /// Hash aggregate modes
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -628,7 +628,7 @@ impl GroupedHashAggregateStream {
                         aggr_expr,
                         input,
                     )
-                        .await
+                    .await
                 }
                 AggregateStrategy::InplaceSorted => {
                     compute_grouped_sorted_aggregate(
@@ -638,7 +638,7 @@ impl GroupedHashAggregateStream {
                         aggr_expr,
                         input,
                     )
-                        .await
+                    .await
                 }
             };
             tx.send(result)
