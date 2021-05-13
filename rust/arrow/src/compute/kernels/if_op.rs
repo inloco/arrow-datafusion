@@ -24,7 +24,6 @@ use crate::buffer::Buffer;
 use crate::datatypes;
 use crate::datatypes::ToByteSlice;
 use crate::error::{ArrowError, Result};
-use std::sync::Arc;
 
 pub fn if_primitive<T>(
     condition: &BooleanArray,
@@ -77,7 +76,7 @@ where
         vec![Buffer::from(values.to_byte_slice())],
         vec![],
     );
-    Ok(PrimitiveArray::<T>::from(Arc::new(data)))
+    Ok(PrimitiveArray::<T>::from(data))
 }
 
 pub fn if_string(

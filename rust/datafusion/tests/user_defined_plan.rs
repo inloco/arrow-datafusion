@@ -58,7 +58,7 @@
 //! N elements, reducing the total amount of required buffer memory.
 //!
 
-use futures::{FutureExt, Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt};
 
 use arrow::{
     array::{Int64Array, StringArray},
@@ -72,7 +72,7 @@ use datafusion::{
     execution::context::ExecutionContextState,
     execution::context::QueryPlanner,
     logical_plan::{Expr, LogicalPlan, UserDefinedLogicalNode},
-    optimizer::{optimizer::OptimizerRule, utils::optimize_explain},
+    optimizer::{optimizer::OptimizerRule, utils::optimize_children},
     physical_plan::{
         planner::{DefaultPhysicalPlanner, ExtensionPlanner},
         Distribution, ExecutionPlan, Partitioning, PhysicalPlanner, RecordBatchStream,
@@ -178,7 +178,10 @@ async fn topk_plan() -> Result<()> {
 }
 
 fn make_topk_context() -> ExecutionContext {
-    let config = ExecutionConfig::new().with_query_planner(Arc::new(TopKQueryPlanner {}));
+    let config = ExecutionConfig::new()
+        .with_query_planner(Arc::new(TopKQueryPlanner {}))
+        .with_concurrency(48)
+        .add_optimizer_rule(Arc::new(TopKOptimizerRule {}));
 
     ExecutionContext::with_config(config)
 }
@@ -188,10 +191,6 @@ fn make_topk_context() -> ExecutionContext {
 struct TopKQueryPlanner {}
 
 impl QueryPlanner for TopKQueryPlanner {
-    fn rewrite_logical_plan(&self, plan: LogicalPlan) -> Result<LogicalPlan> {
-        TopKOptimizerRule {}.optimize(&plan)
-    }
-
     /// Given a `LogicalPlan` created from above, create an
     /// `ExecutionPlan` suitable for execution
     fn create_physical_plan(
@@ -201,7 +200,9 @@ impl QueryPlanner for TopKQueryPlanner {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // Teach the default physical planner how to plan TopK nodes.
         let physical_planner =
-            DefaultPhysicalPlanner::with_extension_planner(Arc::new(TopKPlanner {}));
+            DefaultPhysicalPlanner::with_extension_planners(vec![Arc::new(
+                TopKPlanner {},
+            )]);
         // Delegate most work of physical planning to the default physical planner
         physical_planner.create_physical_plan(logical_plan, ctx_state)
     }
@@ -210,52 +211,32 @@ impl QueryPlanner for TopKQueryPlanner {
 struct TopKOptimizerRule {}
 impl OptimizerRule for TopKOptimizerRule {
     // Example rewrite pass to insert a user defined LogicalPlanNode
-    fn optimize(&mut self, plan: &LogicalPlan) -> Result<LogicalPlan> {
-        match plan {
-            // Note: this code simply looks for the pattern of a Limit followed by a
-            // Sort and replaces it by a TopK node. It does not handle many
-            // edge cases (e.g multiple sort columns, sort ASC / DESC), etc.
-            LogicalPlan::Limit { ref n, ref input } => {
-                if let LogicalPlan::Sort {
-                    ref expr,
-                    ref input,
-                } = **input
-                {
-                    if expr.len() == 1 {
-                        // we found a sort with a single sort expr, replace with a a TopK
-                        return Ok(LogicalPlan::Extension {
-                            node: Arc::new(TopKPlanNode {
-                                k: *n,
-                                input: self.optimize(input.as_ref())?,
-                                expr: expr[0].clone(),
-                            }),
-                        });
-                    }
+    fn optimize(&self, plan: &LogicalPlan) -> Result<LogicalPlan> {
+        // Note: this code simply looks for the pattern of a Limit followed by a
+        // Sort and replaces it by a TopK node. It does not handle many
+        // edge cases (e.g multiple sort columns, sort ASC / DESC), etc.
+        if let LogicalPlan::Limit { ref n, ref input } = plan {
+            if let LogicalPlan::Sort {
+                ref expr,
+                ref input,
+            } = **input
+            {
+                if expr.len() == 1 {
+                    // we found a sort with a single sort expr, replace with a a TopK
+                    return Ok(LogicalPlan::Extension {
+                        node: Arc::new(TopKPlanNode {
+                            k: *n,
+                            input: self.optimize(input.as_ref())?,
+                            expr: expr[0].clone(),
+                        }),
+                    });
                 }
             }
-            // Due to the way explain is implemented, in order to get
-            // explain functionality we need to explicitly handle it
-            // here.
-            LogicalPlan::Explain {
-                verbose,
-                plan,
-                stringified_plans,
-                schema,
-            } => {
-                return optimize_explain(
-                    self,
-                    *verbose,
-                    &*plan,
-                    stringified_plans,
-                    &schema.as_ref().to_owned().into(),
-                )
-            }
-            _ => {}
         }
 
         // If we didn't find the Limit/Sort combination, recurse as
         // normal and build the result.
-        self.optimize_children(plan)
+        optimize_children(self, plan)
     }
 
     fn name(&self) -> &str {
@@ -304,8 +285,8 @@ impl UserDefinedLogicalNode for TopKPlanNode {
 
     fn from_template(
         &self,
-        exprs: &Vec<Expr>,
-        inputs: &Vec<LogicalPlan>,
+        exprs: &[Expr],
+        inputs: &[LogicalPlan],
     ) -> Arc<dyn UserDefinedLogicalNode + Send + Sync> {
         assert_eq!(inputs.len(), 1, "input size inconsistent");
         assert_eq!(exprs.len(), 1, "expression size inconsistent");
@@ -325,22 +306,21 @@ impl ExtensionPlanner for TopKPlanner {
     fn plan_extension(
         &self,
         node: &dyn UserDefinedLogicalNode,
-        inputs: Vec<Arc<dyn ExecutionPlan>>,
+        inputs: &[Arc<dyn ExecutionPlan>],
         _ctx_state: &ExecutionContextState,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        if let Some(topk_node) = node.as_any().downcast_ref::<TopKPlanNode>() {
-            assert_eq!(inputs.len(), 1, "Inconsistent number of inputs");
-            // figure out input name
-            Ok(Arc::new(TopKExec {
-                input: inputs[0].clone(),
-                k: topk_node.k,
-            }))
-        } else {
-            Err(DataFusionError::Internal(format!(
-                "Unknown extension node type {:?}",
-                node
-            )))
-        }
+    ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+        Ok(
+            if let Some(topk_node) = node.as_any().downcast_ref::<TopKPlanNode>() {
+                assert_eq!(inputs.len(), 1, "Inconsistent number of inputs");
+                // figure out input name
+                Some(Arc::new(TopKExec {
+                    input: inputs[0].clone(),
+                    k: topk_node.k,
+                }))
+            } else {
+                None
+            },
+        )
     }
 }
 
@@ -374,7 +354,7 @@ impl ExecutionPlan for TopKExec {
     }
 
     fn required_child_distribution(&self) -> Distribution {
-        Distribution::UnspecifiedDistribution
+        Distribution::SinglePartition
     }
 
     fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
@@ -409,6 +389,7 @@ impl ExecutionPlan for TopKExec {
             input: self.input.execute(partition).await?,
             k: self.k,
             done: false,
+            state: BTreeMap::new(),
         }))
     }
 }
@@ -421,6 +402,8 @@ struct TopKReader {
     k: usize,
     /// Have we produced the output yet?
     done: bool,
+    /// Output
+    state: BTreeMap<i64, String>,
 }
 
 /// Keeps track of the revenue from customer_id and stores if it
@@ -448,11 +431,12 @@ fn remove_lowest_value(top_values: &mut BTreeMap<i64, String>) {
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn accumulate_batch(
     input_batch: &RecordBatch,
     mut top_values: BTreeMap<i64, String>,
     k: &usize,
-) -> Result<BTreeMap<i64, String>> {
+) -> BTreeMap<i64, String> {
     let num_rows = input_batch.num_rows();
     // Assuming the input columns are
     // column[0]: customer_id / UTF8
@@ -477,7 +461,7 @@ fn accumulate_batch(
             k,
         );
     }
-    Ok(top_values)
+    top_values
 }
 
 impl Stream for TopKReader {
@@ -491,44 +475,33 @@ impl Stream for TopKReader {
             return Poll::Ready(None);
         }
         // this aggregates and thus returns a single RecordBatch.
-        self.done = true;
 
         // take this as immutable
         let k = self.k;
         let schema = self.schema();
+        let poll = self.input.poll_next_unpin(cx);
 
-        let top_values = self
-            .input
-            .as_mut()
-            // Hard coded implementation for sales / customer_id example as BTree
-            .try_fold(
-                BTreeMap::<i64, String>::new(),
-                move |top_values, batch| async move {
-                    accumulate_batch(&batch, top_values, &k)
-                        .map_err(DataFusionError::into_arrow_external_error)
-                },
-            );
-
-        let top_values = top_values.map(|top_values| match top_values {
-            Ok(top_values) => {
-                // make output by walking over the map backwards (so values are descending)
+        match poll {
+            Poll::Ready(Some(Ok(batch))) => {
+                self.state = accumulate_batch(&batch, self.state.clone(), &k);
+                Poll::Ready(Some(Ok(RecordBatch::new_empty(schema))))
+            }
+            Poll::Ready(None) => {
+                self.done = true;
                 let (revenue, customer): (Vec<i64>, Vec<&String>) =
-                    top_values.iter().rev().unzip();
+                    self.state.iter().rev().unzip();
 
                 let customer: Vec<&str> = customer.iter().map(|&s| &**s).collect();
-                Ok(RecordBatch::try_new(
+                Poll::Ready(Some(RecordBatch::try_new(
                     schema,
                     vec![
                         Arc::new(StringArray::from(customer)),
                         Arc::new(Int64Array::from(revenue)),
                     ],
-                )?)
+                )))
             }
-            Err(e) => Err(e),
-        });
-        let mut top_values = Box::pin(top_values.into_stream());
-
-        top_values.poll_next_unpin(cx)
+            other => other,
+        }
     }
 }
 

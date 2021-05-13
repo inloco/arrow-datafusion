@@ -18,7 +18,7 @@
 //! Projection Push Down optimizer rule ensures that only referenced columns are
 //! loaded into memory
 
-use crate::error::{DataFusionError, Result};
+use crate::error::Result;
 use crate::logical_plan::{DFField, DFSchema, DFSchemaRef, LogicalPlan, ToDFSchema};
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
@@ -31,7 +31,7 @@ use utils::optimize_explain;
 pub struct ProjectionPushDown {}
 
 impl OptimizerRule for ProjectionPushDown {
-    fn optimize(&mut self, plan: &LogicalPlan) -> Result<LogicalPlan> {
+    fn optimize(&self, plan: &LogicalPlan) -> Result<LogicalPlan> {
         // set of all columns refered by the plan (and thus considered required by the root)
         let required_columns = plan
             .schema()
@@ -56,16 +56,9 @@ impl ProjectionPushDown {
 
 fn get_projected_schema(
     schema: &DFSchema,
-    projection: &Option<Vec<usize>>,
     required_columns: &HashSet<String>,
     has_projection: bool,
 ) -> Result<(Vec<usize>, DFSchemaRef)> {
-    if projection.is_some() {
-        return Err(DataFusionError::Internal(
-            "Cannot run projection push-down rule more than once".to_string(),
-        ));
-    }
-
     // once we reach the table scan, we can use the accumulated set of column
     // names to construct the set of column indexes in the scan
     //
@@ -108,7 +101,7 @@ fn get_projected_schema(
 
 /// Recursively transverses the logical plan removing expressions and that are not needed.
 fn optimize_plan(
-    optimizer: &mut ProjectionPushDown,
+    optimizer: &ProjectionPushDown,
     plan: &LogicalPlan,
     required_columns: &HashSet<String>, // set of columns required up to this step
     has_projection: bool,
@@ -242,9 +235,9 @@ fn optimize_plan(
         LogicalPlan::TableScan {
             table_name,
             source,
-            projection,
             filters,
             alias,
+            limit,
             ..
         } => {
             let (projection, projected_schema) = get_projected_schema(
@@ -252,7 +245,6 @@ fn optimize_plan(
                     .schema()
                     .to_dfschema()?
                     .alias(alias.as_ref().map(|a| a.as_str()))?,
-                projection,
                 required_columns,
                 has_projection,
             )?;
@@ -265,6 +257,7 @@ fn optimize_plan(
                 projected_schema,
                 filters: filters.clone(),
                 alias: alias.clone(),
+                limit: *limit,
             })
         }
         LogicalPlan::Explain {
@@ -286,12 +279,12 @@ fn optimize_plan(
         | LogicalPlan::Sort { .. }
         | LogicalPlan::CreateExternalTable { .. }
         | LogicalPlan::Extension { .. } => {
-            let expr = utils::expressions(plan);
+            let expr = plan.expressions();
             // collect all required columns by this plan
             utils::exprlist_to_column_names(&expr, &mut new_required_columns)?;
 
             // apply the optimization to all inputs of the plan
-            let inputs = utils::inputs(plan);
+            let inputs = plan.inputs();
             let new_inputs = inputs
                 .iter()
                 .map(|plan| {
@@ -302,9 +295,9 @@ fn optimize_plan(
             utils::from_plan(plan, &expr, &new_inputs)
         }
         LogicalPlan::Union { inputs, .. } => {
-            let expr = utils::expressions(plan);
+            let expr = plan.expressions();
             let original_schema = inputs[0].schema();
-            let inputs = utils::inputs(plan);
+            let inputs = plan.inputs();
             let new_inputs = inputs
                 .iter()
                 .map(|plan| {
@@ -525,6 +518,26 @@ mod tests {
         Ok(())
     }
 
+    /// tests that optimizing twice yields same plan
+    #[test]
+    fn test_double_optimization() -> Result<()> {
+        let table_scan = test_table_scan()?;
+
+        let plan = LogicalPlanBuilder::from(&table_scan)
+            .project(vec![col("b")])?
+            .project(vec![lit(1).alias("a")])?
+            .build()?;
+
+        let optimized_plan1 = optimize(&plan).expect("failed to optimize plan");
+        let optimized_plan2 =
+            optimize(&optimized_plan1).expect("failed to optimize plan");
+
+        let formatted_plan1 = format!("{:?}", optimized_plan1);
+        let formatted_plan2 = format!("{:?}", optimized_plan2);
+        assert_eq!(formatted_plan1, formatted_plan2);
+        Ok(())
+    }
+
     /// tests that it removes an aggregate is never used downstream
     #[test]
     fn table_unused_aggregate() -> Result<()> {
@@ -559,7 +572,7 @@ mod tests {
     }
 
     fn optimize(plan: &LogicalPlan) -> Result<LogicalPlan> {
-        let mut rule = ProjectionPushDown::new();
+        let rule = ProjectionPushDown::new();
         rule.optimize(plan)
     }
 }

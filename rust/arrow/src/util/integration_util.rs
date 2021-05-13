@@ -237,25 +237,24 @@ impl ArrowJsonBatch {
                         let arr = arr.as_any().downcast_ref::<Int16Array>().unwrap();
                         arr.equals_json(&json_array.iter().collect::<Vec<&Value>>()[..])
                     }
-                    DataType::Int32 | DataType::Date32(_) | DataType::Time32(_) => {
-                        let arr = Int32Array::from(arr.data());
+                    DataType::Int32 | DataType::Date32 | DataType::Time32(_) => {
+                        let arr = Int32Array::from(arr.data().clone());
                         arr.equals_json(&json_array.iter().collect::<Vec<&Value>>()[..])
                     }
                     DataType::Int64
-                    // TODO
-                    | DataType::Date64(_)
+                    | DataType::Date64
                     | DataType::Time64(_)
                     | DataType::Timestamp(_, _)
                     | DataType::Duration(_) => {
-                        let arr = Int64Array::from(arr.data());
+                        let arr = Int64Array::from(arr.data().clone());
                         arr.equals_json(&json_array.iter().collect::<Vec<&Value>>()[..])
                     }
                     DataType::Interval(IntervalUnit::YearMonth) => {
-                        let arr = IntervalYearMonthArray::from(arr.data());
+                        let arr = IntervalYearMonthArray::from(arr.data().clone());
                         arr.equals_json(&json_array.iter().collect::<Vec<&Value>>()[..])
                     }
                     DataType::Interval(IntervalUnit::DayTime) => {
-                        let arr = IntervalDayTimeArray::from(arr.data());
+                        let arr = IntervalDayTimeArray::from(arr.data().clone());
                         let x = json_array
                             .iter()
                             .map(|v| {
@@ -496,7 +495,7 @@ fn json_from_col(col: &ArrowJsonColumn, data_type: &DataType) -> Vec<Value> {
         DataType::Struct(fields) => json_from_struct_col(col, fields),
         DataType::Int64
         | DataType::UInt64
-        | DataType::Date64(_)
+        | DataType::Date64
         | DataType::Time64(_)
         | DataType::Timestamp(_, _)
         | DataType::Duration(_) => {
@@ -764,8 +763,8 @@ mod tests {
             Field::new("uint64s", DataType::UInt64, true),
             Field::new("float32s", DataType::Float32, true),
             Field::new("float64s", DataType::Float64, true),
-            Field::new("date_days", DataType::Date32(DateUnit::Day), true),
-            Field::new("date_millis", DataType::Date64(DateUnit::Millisecond), true),
+            Field::new("date_days", DataType::Date32, true),
+            Field::new("date_millis", DataType::Date64, true),
             Field::new("time_secs", DataType::Time32(TimeUnit::Second), true),
             Field::new("time_millis", DataType::Time32(TimeUnit::Millisecond), true),
             Field::new("time_micros", DataType::Time64(TimeUnit::Microsecond), true),
@@ -894,7 +893,7 @@ mod tests {
         let list_data = ArrayData::builder(list_data_type)
             .len(3)
             .add_buffer(value_offsets)
-            .add_child_data(value_data.data())
+            .add_child_data(value_data.data().clone())
             .build();
         let lists = ListArray::from(list_data);
 

@@ -143,5 +143,13 @@ void TestRandomPrimitiveCTypes() {
   DoTestFunctor<DurationType>::Test(duration(TimeUnit::MILLI));
 }
 
+// Check that DispatchBest on a given function yields the same Kernel as
+// produced by DispatchExact on another set of ValueDescrs.
+void CheckDispatchBest(std::string func_name, std::vector<ValueDescr> descrs,
+                       std::vector<ValueDescr> exact_descrs);
+
+// Check that function fails to produce a Kernel for the set of ValueDescrs.
+void CheckDispatchFails(std::string func_name, std::vector<ValueDescr> descrs);
+
 }  // namespace compute
 }  // namespace arrow

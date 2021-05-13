@@ -234,7 +234,7 @@ fn sort_batch(
             })
         })
         .collect::<ArrowResult<Vec<_>>>()?;
-    let indices = lexsort_to_indices(columns_to_sort.as_slice())?;
+    let indices = lexsort_to_indices(columns_to_sort.as_slice(), None)?;
 
     RecordBatch::try_new(
         schema.clone(),

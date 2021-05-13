@@ -28,9 +28,12 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use crate::datasource::TableProvider;
 use crate::sql::parser::FileType;
 
-use super::display::{GraphvizVisitor, IndentVisitor};
 use super::expr::Expr;
 use super::extension::UserDefinedLogicalNode;
+use super::{
+    col,
+    display::{GraphvizVisitor, IndentVisitor},
+};
 use crate::logical_plan::dfschema::DFSchemaRef;
 use serde_derive::{Deserialize, Serialize};
 
@@ -98,15 +101,6 @@ pub enum LogicalPlan {
         /// The incoming logical plan
         input: Arc<LogicalPlan>,
     },
-    /// Union multiple inputs
-    Union {
-        /// Inputs to merge
-        inputs: Vec<Arc<LogicalPlan>>,
-        /// Union schema. Should be the same for all inputs.
-        schema: DFSchemaRef,
-        /// Union select alias
-        alias: Option<String>,
-    },
     /// Join two logical plans on one or more join columns
     Join {
         /// Left input
@@ -127,12 +121,21 @@ pub enum LogicalPlan {
         /// The partitioning scheme
         partitioning_scheme: Partitioning,
     },
+    /// Union multiple inputs
+    Union {
+        /// Inputs to merge
+        inputs: Vec<LogicalPlan>,
+        /// Union schema. Should be the same for all inputs.
+        schema: DFSchemaRef,
+        /// Union output relation alias
+        alias: Option<String>,
+    },
     /// Produces rows from a table provider by reference or from the context
     TableScan {
         /// The name of the table
         table_name: String,
         /// The source of the table
-        source: Arc<dyn TableProvider + Send + Sync>,
+        source: Arc<dyn TableProvider>,
         /// Optional column indices to use as a projection
         projection: Option<Vec<usize>>,
         /// The schema description of the output
@@ -141,6 +144,8 @@ pub enum LogicalPlan {
         filters: Vec<Expr>,
         /// Alias
         alias: Option<String>,
+        /// Optional limit to skip reading
+        limit: Option<usize>,
     },
     /// Produces no rows: An empty relation with an empty schema
     EmptyRelation {
@@ -218,12 +223,113 @@ impl LogicalPlan {
         }
     }
 
+    /// Get a vector of references to all schemas in every node of the logical plan
+    pub fn all_schemas(&self) -> Vec<&DFSchemaRef> {
+        match self {
+            LogicalPlan::TableScan {
+                projected_schema, ..
+            } => vec![&projected_schema],
+            LogicalPlan::Aggregate { input, schema, .. }
+            | LogicalPlan::Projection { input, schema, .. } => {
+                let mut schemas = input.all_schemas();
+                schemas.insert(0, &schema);
+                schemas
+            }
+            LogicalPlan::Join {
+                left,
+                right,
+                schema,
+                ..
+            } => {
+                let mut schemas = left.all_schemas();
+                schemas.extend(right.all_schemas());
+                schemas.insert(0, &schema);
+                schemas
+            }
+            LogicalPlan::Union { schema, .. } => {
+                vec![schema]
+            }
+            LogicalPlan::Extension { node } => vec![&node.schema()],
+            LogicalPlan::Explain { schema, .. }
+            | LogicalPlan::EmptyRelation { schema, .. }
+            | LogicalPlan::CreateExternalTable { schema, .. } => vec![&schema],
+            LogicalPlan::Limit { input, .. }
+            | LogicalPlan::Skip { input, .. }
+            | LogicalPlan::Repartition { input, .. }
+            | LogicalPlan::Sort { input, .. }
+            | LogicalPlan::Filter { input, .. } => input.all_schemas(),
+        }
+    }
+
     /// Returns the (fixed) output schema for explain plans
     pub fn explain_schema() -> SchemaRef {
         SchemaRef::new(Schema::new(vec![
             Field::new("plan_type", DataType::Utf8, false),
             Field::new("plan", DataType::Utf8, false),
         ]))
+    }
+
+    /// returns all expressions (non-recursively) in the current
+    /// logical plan node. This does not include expressions in any
+    /// children
+    pub fn expressions(self: &LogicalPlan) -> Vec<Expr> {
+        match self {
+            LogicalPlan::Projection { expr, .. } => expr.clone(),
+            LogicalPlan::Filter { predicate, .. } => vec![predicate.clone()],
+            LogicalPlan::Repartition {
+                partitioning_scheme,
+                ..
+            } => match partitioning_scheme {
+                Partitioning::Hash(expr, _) => expr.clone(),
+                _ => vec![],
+            },
+            LogicalPlan::Aggregate {
+                group_expr,
+                aggr_expr,
+                ..
+            } => {
+                let mut result = group_expr.clone();
+                result.extend(aggr_expr.clone());
+                result
+            }
+            LogicalPlan::Join { on, .. } => {
+                on.iter().flat_map(|(l, r)| vec![col(l), col(r)]).collect()
+            }
+            LogicalPlan::Sort { expr, .. } => expr.clone(),
+            LogicalPlan::Extension { node } => node.expressions(),
+            // plans without expressions
+            LogicalPlan::TableScan { .. }
+            | LogicalPlan::EmptyRelation { .. }
+            | LogicalPlan::Limit { .. }
+            | LogicalPlan::Skip { .. }
+            | LogicalPlan::CreateExternalTable { .. }
+            | LogicalPlan::Explain { .. } => vec![],
+            LogicalPlan::Union { .. } => {
+                vec![]
+            }
+        }
+    }
+
+    /// returns all inputs of this `LogicalPlan` node. Does not
+    /// include inputs to inputs.
+    pub fn inputs(self: &LogicalPlan) -> Vec<&LogicalPlan> {
+        match self {
+            LogicalPlan::Projection { input, .. } => vec![input],
+            LogicalPlan::Filter { input, .. } => vec![input],
+            LogicalPlan::Repartition { input, .. } => vec![input],
+            LogicalPlan::Aggregate { input, .. } => vec![input],
+            LogicalPlan::Sort { input, .. } => vec![input],
+            LogicalPlan::Join { left, right, .. } => vec![left, right],
+            LogicalPlan::Limit { input, .. } => vec![input],
+            LogicalPlan::Skip { input, .. } => vec![input],
+            LogicalPlan::Extension { node } => node.inputs(),
+            LogicalPlan::Union { inputs, .. } => inputs.iter().collect(),
+            // plans without inputs
+            LogicalPlan::TableScan { .. }
+            | LogicalPlan::EmptyRelation { .. }
+            | LogicalPlan::CreateExternalTable { .. }
+            | LogicalPlan::Explain { .. } => vec![],
+        }
     }
 }
 
@@ -307,12 +413,14 @@ impl LogicalPlan {
             LogicalPlan::Join { left, right, .. } => {
                 left.accept(visitor)? && right.accept(visitor)?
             }
-            LogicalPlan::Union { inputs, .. } => inputs
-                .iter()
-                .map(|input| input.accept(visitor))
-                .collect::<Result<Vec<bool>, V::Error>>()?
-                .into_iter()
-                .all(|b| b),
+            LogicalPlan::Union { inputs, .. } => {
+                for input in inputs {
+                    if !input.accept(visitor)? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
             LogicalPlan::Limit { input, .. } => input.accept(visitor)?,
             LogicalPlan::Skip { input, .. } => input.accept(visitor)?,
             LogicalPlan::Extension { node } => {
@@ -518,6 +626,7 @@ impl LogicalPlan {
                         ref table_name,
                         ref projection,
                         ref filters,
+                        ref limit,
                         ..
                     } => {
                         let sep = " ".repeat(min(1, table_name.len()));
@@ -529,6 +638,10 @@ impl LogicalPlan {
 
                         if !filters.is_empty() {
                             write!(f, ", filters={:?}", filters)?;
+                        }
+
+                        if let Some(n) = limit {
+                            write!(f, ", limit={}", n)?;
                         }
 
                         Ok(())
@@ -597,11 +710,8 @@ impl LogicalPlan {
                         write!(f, "CreateExternalTable: {:?}", name)
                     }
                     LogicalPlan::Explain { .. } => write!(f, "Explain"),
+                    LogicalPlan::Union { .. } => write!(f, "Union"),
                     LogicalPlan::Extension { ref node } => node.fmt_for_explain(f),
-                    LogicalPlan::Union { .. } => {
-                        write!(f, "Union")?;
-                        Ok(())
-                    }
                 }
             }
         }

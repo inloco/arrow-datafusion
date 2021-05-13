@@ -87,7 +87,7 @@ class ARROW_EXPORT RecordBatch {
 
   // \return the table's schema
   /// \return true if batches are equal
-  std::shared_ptr<Schema> schema() const { return schema_; }
+  const std::shared_ptr<Schema>& schema() const { return schema_; }
 
   /// \brief Retrieve all columns at once
   std::vector<std::shared_ptr<Array>> columns() const;
@@ -130,6 +130,11 @@ class ARROW_EXPORT RecordBatch {
   virtual Result<std::shared_ptr<RecordBatch>> AddColumn(
       int i, std::string field_name, const std::shared_ptr<Array>& column) const;
 
+  /// \brief Replace a column in the table, producing a new Table
+  virtual Result<std::shared_ptr<RecordBatch>> SetColumn(
+      int i, const std::shared_ptr<Field>& field,
+      const std::shared_ptr<Array>& column) const = 0;
+
   /// \brief Remove column from the record batch, producing a new RecordBatch
   ///
   /// \param[in] i field index, does boundscheck
@@ -160,6 +165,10 @@ class ARROW_EXPORT RecordBatch {
 
   /// \return PrettyPrint representation suitable for debugging
   std::string ToString() const;
+
+  /// \brief Return new record batch with specified columns
+  Result<std::shared_ptr<RecordBatch>> SelectColumns(
+      const std::vector<int>& indices) const;
 
   /// \brief Perform cheap validation checks to determine obvious inconsistencies
   /// within the record batch's schema and internal data.

@@ -60,17 +60,28 @@ std::string nation_dict_truncated_data_page() {
   return data_file("nation.dict-malformed.parquet");
 }
 
-// Compressed using custom Hadoop LZ4 format (block LZ4 format + custom header)
+// LZ4-compressed data files.
+// These files come in three flavours:
+// - legacy "LZ4" compression type, actually compressed with block LZ4 codec
+//   (as emitted by some earlier versions of parquet-cpp)
+// - legacy "LZ4" compression type, actually compressed with custom Hadoop LZ4 codec
+//   (as emitted by parquet-mr)
+// - "LZ4_RAW" compression type (added in Parquet format version 2.9.0)
+
 std::string hadoop_lz4_compressed() { return data_file("hadoop_lz4_compressed.parquet"); }
 
-// Compressed using block LZ4 format
+std::string hadoop_lz4_compressed_larger() {
+  return data_file("hadoop_lz4_compressed_larger.parquet");
+}
+
 std::string non_hadoop_lz4_compressed() {
   return data_file("non_hadoop_lz4_compressed.parquet");
 }
 
-// Larger data compressed using custom Hadoop LZ4 format (several frames)
-std::string hadoop_lz4_compressed_larger() {
-  return data_file("hadoop_lz4_compressed_larger.parquet");
+std::string lz4_raw_compressed() { return data_file("lz4_raw_compressed.parquet"); }
+
+std::string lz4_raw_compressed_larger() {
+  return data_file("lz4_raw_compressed_larger.parquet");
 }
 
 // TODO: Assert on definition and repetition levels
@@ -90,6 +101,29 @@ void AssertColumnValues(std::shared_ptr<TypedColumnReader<DType>> col, int64_t b
   ASSERT_EQ(expected_values_read, values_read);
 }
 
+void CheckRowGroupMetadata(const RowGroupMetaData* rg_metadata,
+                           bool allow_uncompressed_mismatch = false) {
+  const int64_t total_byte_size = rg_metadata->total_byte_size();
+  const int64_t total_compressed_size = rg_metadata->total_compressed_size();
+
+  ASSERT_GE(total_byte_size, 0);
+  ASSERT_GE(total_compressed_size, 0);
+
+  int64_t total_column_byte_size = 0;
+  int64_t total_column_compressed_size = 0;
+  for (int i = 0; i < rg_metadata->num_columns(); ++i) {
+    total_column_byte_size += rg_metadata->ColumnChunk(i)->total_uncompressed_size();
+    total_column_compressed_size += rg_metadata->ColumnChunk(i)->total_compressed_size();
+  }
+
+  if (!allow_uncompressed_mismatch) {
+    ASSERT_EQ(total_byte_size, total_column_byte_size);
+  }
+  if (total_compressed_size != 0) {
+    ASSERT_EQ(total_compressed_size, total_column_compressed_size);
+  }
+}
+
 class TestAllTypesPlain : public ::testing::Test {
  public:
   void SetUp() { reader_ = ParquetFileReader::OpenFile(alltypes_plain()); }
@@ -101,6 +135,11 @@ class TestAllTypesPlain : public ::testing::Test {
 };
 
 TEST_F(TestAllTypesPlain, NoopConstructDestruct) {}
+
+TEST_F(TestAllTypesPlain, RowGroupMetaData) {
+  auto group = reader_->RowGroup(0);
+  CheckRowGroupMetadata(group->metadata());
+}
 
 TEST_F(TestAllTypesPlain, TestBatchRead) {
   std::shared_ptr<RowGroupReader> group = reader_->RowGroup(0);
@@ -289,10 +328,11 @@ Number of RowGroups: 1
 Number of Real Columns: 2
 Number of Columns: 2
 Number of Selected Columns: 2
-Column 0: a.list.element.list.element.list.element (BYTE_ARRAY/UTF8)
+Column 0: a.list.element.list.element.list.element (BYTE_ARRAY / String / UTF8)
 Column 1: b (INT32)
 --- Row Group: 0 ---
 --- Total Bytes: 155 ---
+--- Total Compressed Bytes: 0 ---
 --- Rows: 3 ---
 Column 0
   Values: 18  Statistics Not Set
@@ -392,7 +432,7 @@ TEST(TestJSONWithLocalFile, JSONOutput) {
   ],
   "RowGroups": [
      {
-       "Id": "0",  "TotalBytes": "671",  "Rows": "8",
+       "Id": "0",  "TotalBytes": "671",  "TotalCompressedBytes": "0",  "Rows": "8",
        "ColumnChunks": [
           {"Id": "0", "Values": "8", "StatsSet": "False",
            "Compression": "UNCOMPRESSED", "Encodings": "RLE PLAIN_DICTIONARY PLAIN ", "UncompressedSize": "73", "CompressedSize": "73" },
@@ -519,14 +559,27 @@ TEST(TestFileReader, BufferedReads) {
   }
 }
 
-class TestCodec : public ::testing::TestWithParam<std::string> {
- protected:
-  const std::string& GetDataFile() { return GetParam(); }
+#ifdef ARROW_WITH_LZ4
+struct TestCodecParam {
+  std::string name;
+  std::string small_data_file;
+  std::string larger_data_file;
 };
 
-TEST_P(TestCodec, FileMetadataAndValues) {
-  std::unique_ptr<ParquetFileReader> reader_ = ParquetFileReader::OpenFile(GetDataFile());
+void PrintTo(const TestCodecParam& p, std::ostream* os) { *os << p.name; }
+
+class TestCodec : public ::testing::TestWithParam<TestCodecParam> {
+ protected:
+  const std::string& GetSmallDataFile() { return GetParam().small_data_file; }
+
+  const std::string& GetLargerDataFile() { return GetParam().larger_data_file; }
+};
+
+TEST_P(TestCodec, SmallFileMetadataAndValues) {
+  std::unique_ptr<ParquetFileReader> reader_ =
+      ParquetFileReader::OpenFile(GetSmallDataFile());
   std::shared_ptr<RowGroupReader> group = reader_->RowGroup(0);
+  const auto rg_metadata = group->metadata();
 
   // This file only has 4 rows
   ASSERT_EQ(4, reader_->metadata()->num_rows());
@@ -534,8 +587,17 @@ TEST_P(TestCodec, FileMetadataAndValues) {
   ASSERT_EQ(3, reader_->metadata()->num_columns());
   // This file only has 1 row group
   ASSERT_EQ(1, reader_->metadata()->num_row_groups());
+
   // This row group must have 4 rows
-  ASSERT_EQ(4, group->metadata()->num_rows());
+  ASSERT_EQ(4, rg_metadata->num_rows());
+
+  // Some parquet-cpp versions are susceptible to PARQUET-2008
+  const auto& app_ver = reader_->metadata()->writer_version();
+  const bool allow_uncompressed_mismatch =
+      (app_ver.application_ == "parquet-cpp" && app_ver.version.major == 1 &&
+       app_ver.version.minor == 5 && app_ver.version.patch == 1);
+
+  CheckRowGroupMetadata(rg_metadata, allow_uncompressed_mismatch);
 
   // column 0, c0
   auto col0 = checked_pointer_cast<Int64Reader>(group->Column(0));
@@ -554,14 +616,14 @@ TEST_P(TestCodec, FileMetadataAndValues) {
   AssertColumnValues(col2, 4, 4, expected_double_values, 4);
 }
 
-#ifdef ARROW_WITH_LZ4
-INSTANTIATE_TEST_SUITE_P(Lz4CodecTests, TestCodec,
-                         ::testing::Values(hadoop_lz4_compressed(),
-                                           non_hadoop_lz4_compressed()));
-
-TEST(TestLz4HadoopCodec, TestSeveralFrames) {
-  // ARROW-9177: Hadoop can compress a data block in several LZ4 "frames"
-  auto file = ParquetFileReader::OpenFile(hadoop_lz4_compressed_larger());
+TEST_P(TestCodec, LargeFileValues) {
+  // Test codec with a larger data file such data may have been compressed
+  // in several "frames" (ARROW-9177)
+  auto file_path = GetParam().larger_data_file;
+  if (file_path.empty()) {
+    GTEST_SKIP() << "Larger data file not available for this codec";
+  }
+  auto file = ParquetFileReader::OpenFile(file_path);
   auto group = file->RowGroup(0);
 
   const int64_t kNumRows = 10000;
@@ -585,6 +647,14 @@ TEST(TestLz4HadoopCodec, TestSeveralFrames) {
   ASSERT_EQ(values[kNumRows - 2], ByteArray("ab52a0cc-c6bb-4d61-8a8f-166dc4b8b13c"));
   ASSERT_EQ(values[kNumRows - 1], ByteArray("85440778-460a-41ac-aa2e-ac3ee41696bf"));
 }
-#endif
+
+std::vector<TestCodecParam> test_codec_params{
+    {"LegacyLZ4Hadoop", hadoop_lz4_compressed(), hadoop_lz4_compressed_larger()},
+    {"LegacyLZ4NonHadoop", non_hadoop_lz4_compressed(), ""},
+    {"LZ4Raw", lz4_raw_compressed(), lz4_raw_compressed_larger()}};
+
+INSTANTIATE_TEST_SUITE_P(Lz4CodecTests, TestCodec, ::testing::ValuesIn(test_codec_params),
+                         testing::PrintToStringParamName());
+#endif  // ARROW_WITH_LZ4
 
 }  // namespace parquet

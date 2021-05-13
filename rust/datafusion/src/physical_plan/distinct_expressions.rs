@@ -17,6 +17,7 @@
 
 //! Implementations for DISTINCT expressions, e.g. `COUNT(DISTINCT c)`
 
+use std::any::Any;
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -69,6 +70,11 @@ impl DistinctCount {
 }
 
 impl AggregateExpr for DistinctCount {
+    /// Return a reference to Any that can be used for downcasting
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn field(&self) -> Result<Field> {
         Ok(Field::new(&self.name, self.data_type.clone(), true))
     }
@@ -112,7 +118,7 @@ impl Accumulator for DistinctCountAccumulator {
         self.values.clear();
     }
 
-    fn update(&mut self, values: &Vec<ScalarValue>) -> Result<()> {
+    fn update(&mut self, values: &[ScalarValue]) -> Result<()> {
         // If a row has a NULL, it is not included in the final count.
         if !values.iter().any(|v| v.is_null()) {
             self.values.push(DistinctScalarValues(
@@ -126,7 +132,7 @@ impl Accumulator for DistinctCountAccumulator {
         Ok(())
     }
 
-    fn merge(&mut self, states: &Vec<ScalarValue>) -> Result<()> {
+    fn merge(&mut self, states: &[ScalarValue]) -> Result<()> {
         if states.is_empty() {
             return Ok(());
         }
@@ -258,8 +264,8 @@ mod tests {
     }
 
     fn collect_states<T: Ord + Clone, S: Ord + Clone>(
-        state1: &Vec<Option<T>>,
-        state2: &Vec<Option<S>>,
+        state1: &[Option<T>],
+        state2: &[Option<S>],
     ) -> Vec<(Option<T>, Option<S>)> {
         let mut states = state1
             .iter()
@@ -270,9 +276,7 @@ mod tests {
         states
     }
 
-    fn run_update_batch(
-        arrays: &Vec<ArrayRef>,
-    ) -> Result<(Vec<ScalarValue>, ScalarValue)> {
+    fn run_update_batch(arrays: &[ArrayRef]) -> Result<(Vec<ScalarValue>, ScalarValue)> {
         let agg = DistinctCount::new(
             arrays
                 .iter()
@@ -290,11 +294,11 @@ mod tests {
     }
 
     fn run_update(
-        data_types: &Vec<DataType>,
-        rows: &Vec<Vec<ScalarValue>>,
+        data_types: &[DataType],
+        rows: &[Vec<ScalarValue>],
     ) -> Result<(Vec<ScalarValue>, ScalarValue)> {
         let agg = DistinctCount::new(
-            data_types.clone(),
+            data_types.to_vec(),
             vec![],
             String::from("__col_name__"),
             DataType::UInt64,
@@ -309,9 +313,7 @@ mod tests {
         Ok((accum.state()?.to_vec(), accum.evaluate()?))
     }
 
-    fn run_merge_batch(
-        arrays: &Vec<ArrayRef>,
-    ) -> Result<(Vec<ScalarValue>, ScalarValue)> {
+    fn run_merge_batch(arrays: &[ArrayRef]) -> Result<(Vec<ScalarValue>, ScalarValue)> {
         let agg = DistinctCount::new(
             arrays
                 .iter()
@@ -454,8 +456,8 @@ mod tests {
     #[test]
     fn count_distinct_update() -> Result<()> {
         let (states, result) = run_update(
-            &vec![DataType::Int32, DataType::UInt64],
-            &vec![
+            &[DataType::Int32, DataType::UInt64],
+            &[
                 vec![ScalarValue::Int32(Some(-1)), ScalarValue::UInt64(Some(5))],
                 vec![ScalarValue::Int32(Some(5)), ScalarValue::UInt64(Some(1))],
                 vec![ScalarValue::Int32(Some(-1)), ScalarValue::UInt64(Some(5))],
@@ -489,8 +491,8 @@ mod tests {
     #[test]
     fn count_distinct_update_with_nulls() -> Result<()> {
         let (states, result) = run_update(
-            &vec![DataType::Int32, DataType::UInt64],
-            &vec![
+            &[DataType::Int32, DataType::UInt64],
+            &[
                 // None of these updates contains a None, so these are accumulated.
                 vec![ScalarValue::Int32(Some(-1)), ScalarValue::UInt64(Some(5))],
                 vec![ScalarValue::Int32(Some(-1)), ScalarValue::UInt64(Some(5))],
@@ -536,7 +538,7 @@ mod tests {
             UInt64Builder
         )?;
 
-        let (states, result) = run_merge_batch(&vec![state_in1, state_in2])?;
+        let (states, result) = run_merge_batch(&[state_in1, state_in2])?;
 
         let state_out_vec1 = state_to_vec!(&states[0], Int32, i32).unwrap();
         let state_out_vec2 = state_to_vec!(&states[1], UInt64, u64).unwrap();

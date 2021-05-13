@@ -34,8 +34,8 @@ pub(super) fn dictionary_equal<T: ArrowNativeType>(
     let lhs_keys = lhs.buffer::<T>(0);
     let rhs_keys = rhs.buffer::<T>(0);
 
-    let lhs_values = lhs.child_data()[0].as_ref();
-    let rhs_values = rhs.child_data()[0].as_ref();
+    let lhs_values = &lhs.child_data()[0];
+    let rhs_values = &rhs.child_data()[0];
 
     let lhs_null_count = count_nulls(lhs_nulls, lhs_start, len);
     let rhs_null_count = count_nulls(rhs_nulls, rhs_start, len);
@@ -63,8 +63,8 @@ pub(super) fn dictionary_equal<T: ArrowNativeType>(
             let lhs_pos = lhs_start + i;
             let rhs_pos = rhs_start + i;
 
-            let lhs_is_null = !get_bit(lhs_null_bytes, lhs_pos);
-            let rhs_is_null = !get_bit(rhs_null_bytes, rhs_pos);
+            let lhs_is_null = !get_bit(lhs_null_bytes, lhs_pos + lhs.offset());
+            let rhs_is_null = !get_bit(rhs_null_bytes, rhs_pos + rhs.offset());
 
             lhs_is_null
                 || (lhs_is_null == rhs_is_null)

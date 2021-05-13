@@ -17,7 +17,7 @@
 
 //! Utilities for converting between IPC types and native Arrow types
 
-use crate::datatypes::{DataType, DateUnit, Field, IntervalUnit, Schema, TimeUnit};
+use crate::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 use crate::error::{ArrowError, Result};
 use crate::ipc;
 
@@ -223,8 +223,8 @@ pub(crate) fn get_data_type(field: ipc::Field, may_be_dictionary: bool) -> DataT
         ipc::Type::Date => {
             let date = field.type_as_date().unwrap();
             match date.unit() {
-                ipc::DateUnit::DAY => DataType::Date32(DateUnit::Day),
-                ipc::DateUnit::MILLISECOND => DataType::Date64(DateUnit::Millisecond),
+                ipc::DateUnit::DAY => DataType::Date32,
+                ipc::DateUnit::MILLISECOND => DataType::Date64,
                 z => panic!("Date type with unit of {:?} not supported", z),
             }
         }
@@ -499,7 +499,7 @@ pub(crate) fn get_fb_field_type<'a>(
                 children: Some(fbb.create_vector(&empty_fields[..])),
             }
         }
-        Date32(_) => {
+        Date32 => {
             let mut builder = ipc::DateBuilder::new(fbb);
             builder.add_unit(ipc::DateUnit::DAY);
             FBFieldType {
@@ -508,7 +508,7 @@ pub(crate) fn get_fb_field_type<'a>(
                 children: Some(fbb.create_vector(&empty_fields[..])),
             }
         }
-        Date64(_) => {
+        Date64 => {
             let mut builder = ipc::DateBuilder::new(fbb);
             builder.add_unit(ipc::DateUnit::MILLISECOND);
             FBFieldType {
@@ -733,8 +733,8 @@ mod tests {
                 Field::new("float64", DataType::Float64, true),
                 Field::new("null", DataType::Null, false),
                 Field::new("bool", DataType::Boolean, false),
-                Field::new("date32", DataType::Date32(DateUnit::Day), false),
-                Field::new("date64", DataType::Date64(DateUnit::Millisecond), true),
+                Field::new("date32", DataType::Date32, false),
+                Field::new("date64", DataType::Date64, true),
                 Field::new("time32[s]", DataType::Time32(TimeUnit::Second), true),
                 Field::new("time32[ms]", DataType::Time32(TimeUnit::Millisecond), false),
                 Field::new("time64[us]", DataType::Time64(TimeUnit::Microsecond), false),
@@ -801,11 +801,7 @@ mod tests {
                             DataType::List(Box::new(Field::new(
                                 "struct",
                                 DataType::Struct(vec![
-                                    Field::new(
-                                        "date32",
-                                        DataType::Date32(DateUnit::Day),
-                                        true,
-                                    ),
+                                    Field::new("date32", DataType::Date32, true),
                                     Field::new(
                                         "list[struct<>]",
                                         DataType::List(Box::new(Field::new(

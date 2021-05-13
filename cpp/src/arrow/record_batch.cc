@@ -89,8 +89,9 @@ class SimpleRecordBatch : public RecordBatch {
     ARROW_CHECK(column != nullptr);
 
     if (!field->type()->Equals(column->type())) {
-      return Status::Invalid("Column data type ", field->type()->name(),
-                             " does not match field data type ", column->type()->name());
+      return Status::TypeError("Column data type ", field->type()->name(),
+                               " does not match field data type ",
+                               column->type()->name());
     }
     if (column->length() != num_rows_) {
       return Status::Invalid(
@@ -102,6 +103,28 @@ class SimpleRecordBatch : public RecordBatch {
 
     return RecordBatch::Make(new_schema, num_rows_,
                              internal::AddVectorElement(columns_, i, column->data()));
+  }
+
+  Result<std::shared_ptr<RecordBatch>> SetColumn(
+      int i, const std::shared_ptr<Field>& field,
+      const std::shared_ptr<Array>& column) const override {
+    ARROW_CHECK(field != nullptr);
+    ARROW_CHECK(column != nullptr);
+
+    if (!field->type()->Equals(column->type())) {
+      return Status::TypeError("Column data type ", field->type()->name(),
+                               " does not match field data type ",
+                               column->type()->name());
+    }
+    if (column->length() != num_rows_) {
+      return Status::Invalid(
+          "Added column's length must match record batch's length. Expected length ",
+          num_rows_, " but got length ", column->length());
+    }
+
+    ARROW_ASSIGN_OR_RAISE(auto new_schema, schema_->SetField(i, field));
+    return RecordBatch::Make(new_schema, num_rows_,
+                             internal::ReplaceVectorElement(columns_, i, column->data()));
   }
 
   Result<std::shared_ptr<RecordBatch>> RemoveColumn(int i) const override {
@@ -162,8 +185,8 @@ std::shared_ptr<RecordBatch> RecordBatch::Make(
 Result<std::shared_ptr<RecordBatch>> RecordBatch::FromStructArray(
     const std::shared_ptr<Array>& array) {
   if (array->type_id() != Type::STRUCT) {
-    return Status::Invalid("Cannot construct record batch from array of type ",
-                           *array->type());
+    return Status::TypeError("Cannot construct record batch from array of type ",
+                             *array->type());
   }
   if (array->null_count() != 0) {
     return Status::Invalid(
@@ -228,6 +251,27 @@ bool RecordBatch::ApproxEquals(const RecordBatch& other) const {
   }
 
   return true;
+}
+
+Result<std::shared_ptr<RecordBatch>> RecordBatch::SelectColumns(
+    const std::vector<int>& indices) const {
+  int n = static_cast<int>(indices.size());
+
+  FieldVector fields(n);
+  ArrayVector columns(n);
+
+  for (int i = 0; i < n; i++) {
+    int pos = indices[i];
+    if (pos < 0 || pos > num_columns() - 1) {
+      return Status::Invalid("Invalid column index ", pos, " to select columns.");
+    }
+    fields[i] = schema()->field(pos);
+    columns[i] = column(pos);
+  }
+
+  auto new_schema =
+      std::make_shared<arrow::Schema>(std::move(fields), schema()->metadata());
+  return RecordBatch::Make(new_schema, num_rows(), std::move(columns));
 }
 
 std::shared_ptr<RecordBatch> RecordBatch::Slice(int64_t offset) const {

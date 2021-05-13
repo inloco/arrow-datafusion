@@ -59,73 +59,73 @@ use variable_size::variable_sized_equal;
 
 impl PartialEq for dyn Array {
     fn eq(&self, other: &Self) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl<T: Array> PartialEq<T> for dyn Array {
     fn eq(&self, other: &T) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl PartialEq for NullArray {
     fn eq(&self, other: &NullArray) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl<T: ArrowPrimitiveType> PartialEq for PrimitiveArray<T> {
     fn eq(&self, other: &PrimitiveArray<T>) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl PartialEq for BooleanArray {
     fn eq(&self, other: &BooleanArray) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl<OffsetSize: StringOffsetSizeTrait> PartialEq for GenericStringArray<OffsetSize> {
     fn eq(&self, other: &Self) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl<OffsetSize: BinaryOffsetSizeTrait> PartialEq for GenericBinaryArray<OffsetSize> {
     fn eq(&self, other: &Self) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl PartialEq for FixedSizeBinaryArray {
     fn eq(&self, other: &Self) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl PartialEq for DecimalArray {
     fn eq(&self, other: &Self) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl<OffsetSize: OffsetSizeTrait> PartialEq for GenericListArray<OffsetSize> {
     fn eq(&self, other: &Self) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl PartialEq for FixedSizeListArray {
     fn eq(&self, other: &Self) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
 impl PartialEq for StructArray {
     fn eq(&self, other: &Self) -> bool {
-        equal(self.data().as_ref(), other.data().as_ref())
+        equal(self.data(), other.data())
     }
 }
 
@@ -184,12 +184,12 @@ fn equal_values(
         DataType::Float64 => primitive_equal::<f64>(
             lhs, rhs, lhs_nulls, rhs_nulls, lhs_start, rhs_start, len,
         ),
-        DataType::Date32(_)
+        DataType::Date32
         | DataType::Time32(_)
         | DataType::Interval(IntervalUnit::YearMonth) => primitive_equal::<i32>(
             lhs, rhs, lhs_nulls, rhs_nulls, lhs_start, rhs_start, len,
         ),
-        DataType::Date64(_)
+        DataType::Date64
         | DataType::Interval(IntervalUnit::DayTime)
         | DataType::Time64(_)
         | DataType::Timestamp(_, _)
@@ -294,10 +294,10 @@ mod tests {
     use std::sync::Arc;
 
     use crate::array::{
-        array::Array, ArrayDataBuilder, ArrayDataRef, ArrayRef, BinaryOffsetSizeTrait,
-        BooleanArray, DecimalBuilder, FixedSizeBinaryBuilder, FixedSizeListBuilder,
-        GenericBinaryArray, Int32Builder, ListBuilder, NullArray, PrimitiveBuilder,
-        StringArray, StringDictionaryBuilder, StringOffsetSizeTrait, StructArray,
+        array::Array, ArrayDataBuilder, ArrayRef, BinaryOffsetSizeTrait, BooleanArray,
+        DecimalBuilder, FixedSizeBinaryBuilder, FixedSizeListBuilder, GenericBinaryArray,
+        Int32Builder, ListBuilder, NullArray, PrimitiveBuilder, StringArray,
+        StringDictionaryBuilder, StringOffsetSizeTrait, StructArray,
     };
     use crate::array::{GenericStringArray, Int32Array};
     use crate::buffer::Buffer;
@@ -307,11 +307,14 @@ mod tests {
 
     #[test]
     fn test_null_equal() {
-        let a = NullArray::new(12).data();
-        let b = NullArray::new(12).data();
+        let a = NullArray::new(12);
+        let a = a.data();
+        let b = NullArray::new(12);
+        let b = b.data();
         test_equal(&a, &b, true);
 
-        let b = NullArray::new(10).data();
+        let b = NullArray::new(10);
+        let b = b.data();
         test_equal(&a, &b, false);
 
         // Test the case where offset != 0
@@ -327,41 +330,51 @@ mod tests {
 
     #[test]
     fn test_boolean_equal() {
-        let a = BooleanArray::from(vec![false, false, true]).data();
-        let b = BooleanArray::from(vec![false, false, true]).data();
-        test_equal(a.as_ref(), b.as_ref(), true);
+        let a = BooleanArray::from(vec![false, false, true]);
+        let a = a.data();
+        let b = BooleanArray::from(vec![false, false, true]);
+        let b = b.data();
+        test_equal(&a, &b, true);
 
-        let b = BooleanArray::from(vec![false, false, false]).data();
-        test_equal(a.as_ref(), b.as_ref(), false);
+        let b = BooleanArray::from(vec![false, false, false]);
+        let b = b.data();
+        test_equal(&a, &b, false);
+    }
 
-        // Test the case where null_count > 0
+    #[test]
+    fn test_boolean_equal_nulls() {
+        let a = BooleanArray::from(vec![Some(false), None, None, Some(true)]);
+        let a = a.data();
+        let b = BooleanArray::from(vec![Some(false), None, None, Some(true)]);
+        let b = b.data();
+        test_equal(&a, &b, true);
 
-        let a = BooleanArray::from(vec![Some(false), None, None, Some(true)]).data();
-        let b = BooleanArray::from(vec![Some(false), None, None, Some(true)]).data();
-        test_equal(a.as_ref(), b.as_ref(), true);
+        let b = BooleanArray::from(vec![None, None, None, Some(true)]);
+        let b = b.data();
+        test_equal(&a, &b, false);
 
-        let b = BooleanArray::from(vec![None, None, None, Some(true)]).data();
-        test_equal(a.as_ref(), b.as_ref(), false);
+        let b = BooleanArray::from(vec![Some(true), None, None, Some(true)]);
+        let b = b.data();
+        test_equal(&a, &b, false);
+    }
 
-        let b = BooleanArray::from(vec![Some(true), None, None, Some(true)]).data();
-        test_equal(a.as_ref(), b.as_ref(), false);
-
-        // Test the case where offset != 0
-
-        let a =
-            BooleanArray::from(vec![false, true, false, true, false, false, true]).data();
+    #[test]
+    fn test_boolean_equal_offset() {
+        let a = BooleanArray::from(vec![false, true, false, true, false, false, true]);
+        let a = a.data();
         let b =
-            BooleanArray::from(vec![false, false, false, true, false, true, true]).data();
-        assert_eq!(equal(a.as_ref(), b.as_ref()), false);
-        assert_eq!(equal(b.as_ref(), a.as_ref()), false);
+            BooleanArray::from(vec![true, false, false, false, true, false, true, true]);
+        let b = b.data();
+        assert_eq!(equal(a, b), false);
+        assert_eq!(equal(b, a), false);
 
         let a_slice = a.slice(2, 3);
-        let b_slice = b.slice(2, 3);
+        let b_slice = b.slice(3, 3);
         assert_eq!(equal(&a_slice, &b_slice), true);
         assert_eq!(equal(&b_slice, &a_slice), true);
 
         let a_slice = a.slice(3, 4);
-        let b_slice = b.slice(3, 4);
+        let b_slice = b.slice(4, 4);
         assert_eq!(equal(&a_slice, &b_slice), false);
         assert_eq!(equal(&b_slice, &a_slice), false);
 
@@ -369,15 +382,19 @@ mod tests {
 
         // Elements fill in `u8`'s exactly.
         let mut vector = vec![false, false, true, true, true, true, true, true];
-        let a = BooleanArray::from(vector.clone()).data();
-        let b = BooleanArray::from(vector.clone()).data();
-        test_equal(a.as_ref(), b.as_ref(), true);
+        let a = BooleanArray::from(vector.clone());
+        let a = a.data();
+        let b = BooleanArray::from(vector.clone());
+        let b = b.data();
+        test_equal(&a, &b, true);
 
         // Elements fill in `u8`s + suffix bits.
         vector.push(true);
-        let a = BooleanArray::from(vector.clone()).data();
-        let b = BooleanArray::from(vector).data();
-        test_equal(a.as_ref(), b.as_ref(), true);
+        let a = BooleanArray::from(vector.clone());
+        let a = a.data();
+        let b = BooleanArray::from(vector);
+        let b = b.data();
+        test_equal(&a, &b, true);
     }
 
     #[test]
@@ -411,8 +428,10 @@ mod tests {
         ];
 
         for (lhs, rhs, expected) in cases {
-            let lhs = Int32Array::from(lhs).data();
-            let rhs = Int32Array::from(rhs).data();
+            let lhs = Int32Array::from(lhs);
+            let lhs = lhs.data();
+            let rhs = Int32Array::from(rhs);
+            let rhs = rhs.data();
             test_equal(&lhs, &rhs, expected);
         }
     }
@@ -441,12 +460,28 @@ mod tests {
                 (2, 1),
                 true,
             ),
+            (
+                vec![None, Some(2), None],
+                (1, 1),
+                vec![None, None, Some(2)],
+                (2, 1),
+                true,
+            ),
+            (
+                vec![Some(1), None, Some(2), None, Some(3)],
+                (2, 2),
+                vec![None, Some(2), None, Some(3)],
+                (1, 2),
+                true,
+            ),
         ];
 
         for (lhs, slice_lhs, rhs, slice_rhs, expected) in cases {
-            let lhs = Int32Array::from(lhs).data();
+            let lhs = Int32Array::from(lhs);
+            let lhs = lhs.data();
             let lhs = lhs.slice(slice_lhs.0, slice_lhs.1);
-            let rhs = Int32Array::from(rhs).data();
+            let rhs = Int32Array::from(rhs);
+            let rhs = rhs.data();
             let rhs = rhs.slice(slice_rhs.0, slice_rhs.1);
 
             test_equal(&lhs, &rhs, expected);
@@ -501,9 +536,11 @@ mod tests {
         for (lhs, rhs, expected) in cases {
             let lhs = lhs.iter().map(|x| x.as_deref()).collect();
             let rhs = rhs.iter().map(|x| x.as_deref()).collect();
-            let lhs = GenericStringArray::<OffsetSize>::from_opt_vec(lhs).data();
-            let rhs = GenericStringArray::<OffsetSize>::from_opt_vec(rhs).data();
-            test_equal(lhs.as_ref(), rhs.as_ref(), expected);
+            let lhs = GenericStringArray::<OffsetSize>::from_opt_vec(lhs);
+            let lhs = lhs.data();
+            let rhs = GenericStringArray::<OffsetSize>::from_opt_vec(rhs);
+            let rhs = rhs.data();
+            test_equal(lhs, rhs, expected);
         }
     }
 
@@ -529,9 +566,11 @@ mod tests {
                 .iter()
                 .map(|x| x.as_deref().map(|x| x.as_bytes()))
                 .collect();
-            let lhs = GenericBinaryArray::<OffsetSize>::from_opt_vec(lhs).data();
-            let rhs = GenericBinaryArray::<OffsetSize>::from_opt_vec(rhs).data();
-            test_equal(lhs.as_ref(), rhs.as_ref(), expected);
+            let lhs = GenericBinaryArray::<OffsetSize>::from_opt_vec(lhs);
+            let lhs = lhs.data();
+            let rhs = GenericBinaryArray::<OffsetSize>::from_opt_vec(rhs);
+            let rhs = rhs.data();
+            test_equal(lhs, rhs, expected);
         }
     }
 
@@ -546,18 +585,42 @@ mod tests {
     }
 
     #[test]
-    fn test_null() {
-        let a = NullArray::new(2).data();
-        let b = NullArray::new(2).data();
-        test_equal(a.as_ref(), b.as_ref(), true);
+    fn test_string_offset() {
+        let a = StringArray::from(vec![Some("a"), None, Some("b")]);
+        let a = a.data();
+        let a = a.slice(2, 1);
+        let b = StringArray::from(vec![Some("b")]);
+        let b = b.data();
 
-        let b = NullArray::new(1).data();
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, true);
     }
 
-    fn create_list_array<U: AsRef<[i32]>, T: AsRef<[Option<U>]>>(
-        data: T,
-    ) -> ArrayDataRef {
+    #[test]
+    fn test_string_offset_larger() {
+        let a = StringArray::from(vec![Some("a"), None, Some("b"), None, Some("c")]);
+        let a = a.data();
+        let b = StringArray::from(vec![None, Some("b"), None, Some("c")]);
+        let b = b.data();
+
+        test_equal(&a.slice(2, 2), &b.slice(0, 2), false);
+        test_equal(&a.slice(2, 2), &b.slice(1, 2), true);
+        test_equal(&a.slice(2, 2), &b.slice(2, 2), false);
+    }
+
+    #[test]
+    fn test_null() {
+        let a = NullArray::new(2);
+        let a = a.data();
+        let b = NullArray::new(2);
+        let b = b.data();
+        test_equal(&a, &b, true);
+
+        let b = NullArray::new(1);
+        let b = b.data();
+        test_equal(&a, &b, false);
+    }
+
+    fn create_list_array<U: AsRef<[i32]>, T: AsRef<[Option<U>]>>(data: T) -> ArrayData {
         let mut builder = ListBuilder::new(Int32Builder::new(10));
         for d in data.as_ref() {
             if let Some(v) = d {
@@ -567,17 +630,17 @@ mod tests {
                 builder.append(false).unwrap()
             }
         }
-        builder.finish().data()
+        builder.finish().data().clone()
     }
 
     #[test]
     fn test_list_equal() {
         let a = create_list_array(&[Some(&[1, 2, 3]), Some(&[4, 5, 6])]);
         let b = create_list_array(&[Some(&[1, 2, 3]), Some(&[4, 5, 6])]);
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         let b = create_list_array(&[Some(&[1, 2, 3]), Some(&[4, 5, 7])]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
     }
 
     // Test the case where null_count > 0
@@ -587,7 +650,7 @@ mod tests {
             create_list_array(&[Some(&[1, 2]), None, None, Some(&[3, 4]), None, None]);
         let b =
             create_list_array(&[Some(&[1, 2]), None, None, Some(&[3, 4]), None, None]);
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         let b = create_list_array(&[
             Some(&[1, 2]),
@@ -597,11 +660,11 @@ mod tests {
             None,
             None,
         ]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
 
         let b =
             create_list_array(&[Some(&[1, 2]), None, None, Some(&[3, 5]), None, None]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
 
         // a list where the nullness of values is determined by the list's bitmap
         let c_values = Int32Array::from(vec![1, 2, -1, -2, 3, 4, -3, -4]);
@@ -612,7 +675,7 @@ mod tests {
         ))))
         .len(6)
         .add_buffer(Buffer::from(vec![0i32, 2, 3, 4, 6, 7, 8].to_byte_slice()))
-        .add_child_data(c_values.data())
+        .add_child_data(c_values.data().clone())
         .null_bit_buffer(Buffer::from(vec![0b00001001]))
         .build();
 
@@ -633,10 +696,10 @@ mod tests {
         ))))
         .len(6)
         .add_buffer(Buffer::from(vec![0i32, 2, 3, 4, 6, 7, 8].to_byte_slice()))
-        .add_child_data(d_values.data())
+        .add_child_data(d_values.data().clone())
         .null_bit_buffer(Buffer::from(vec![0b00001001]))
         .build();
-        test_equal(c.as_ref(), d.as_ref(), true);
+        test_equal(&c, &d, true);
     }
 
     // Test the case where offset != 0
@@ -662,7 +725,7 @@ mod tests {
 
     fn create_fixed_size_binary_array<U: AsRef<[u8]>, T: AsRef<[Option<U>]>>(
         data: T,
-    ) -> ArrayDataRef {
+    ) -> ArrayData {
         let mut builder = FixedSizeBinaryBuilder::new(15, 5);
 
         for d in data.as_ref() {
@@ -672,17 +735,17 @@ mod tests {
                 builder.append_null().unwrap();
             }
         }
-        builder.finish().data()
+        builder.finish().data().clone()
     }
 
     #[test]
     fn test_fixed_size_binary_equal() {
         let a = create_fixed_size_binary_array(&[Some(b"hello"), Some(b"world")]);
         let b = create_fixed_size_binary_array(&[Some(b"hello"), Some(b"world")]);
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         let b = create_fixed_size_binary_array(&[Some(b"hello"), Some(b"arrow")]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
     }
 
     // Test the case where null_count > 0
@@ -690,13 +753,13 @@ mod tests {
     fn test_fixed_size_binary_null() {
         let a = create_fixed_size_binary_array(&[Some(b"hello"), None, Some(b"world")]);
         let b = create_fixed_size_binary_array(&[Some(b"hello"), None, Some(b"world")]);
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         let b = create_fixed_size_binary_array(&[Some(b"hello"), Some(b"world"), None]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
 
         let b = create_fixed_size_binary_array(&[Some(b"hello"), None, Some(b"arrow")]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
     }
 
     #[test]
@@ -736,7 +799,7 @@ mod tests {
         test_equal(&a_slice, &b_slice, false);
     }
 
-    fn create_decimal_array(data: &[Option<i128>]) -> ArrayDataRef {
+    fn create_decimal_array(data: &[Option<i128>]) -> ArrayData {
         let mut builder = DecimalBuilder::new(20, 23, 6);
 
         for d in data {
@@ -746,17 +809,17 @@ mod tests {
                 builder.append_null().unwrap();
             }
         }
-        builder.finish().data()
+        builder.finish().data().clone()
     }
 
     #[test]
     fn test_decimal_equal() {
         let a = create_decimal_array(&[Some(8_887_000_000), Some(-8_887_000_000)]);
         let b = create_decimal_array(&[Some(8_887_000_000), Some(-8_887_000_000)]);
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         let b = create_decimal_array(&[Some(15_887_000_000), Some(-8_887_000_000)]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
     }
 
     // Test the case where null_count > 0
@@ -764,13 +827,13 @@ mod tests {
     fn test_decimal_null() {
         let a = create_decimal_array(&[Some(8_887_000_000), None, Some(-8_887_000_000)]);
         let b = create_decimal_array(&[Some(8_887_000_000), None, Some(-8_887_000_000)]);
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         let b = create_decimal_array(&[Some(8_887_000_000), Some(-8_887_000_000), None]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
 
         let b = create_decimal_array(&[Some(15_887_000_000), None, Some(-8_887_000_000)]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
     }
 
     #[test]
@@ -785,6 +848,7 @@ mod tests {
             None,
         ]);
         let b = create_decimal_array(&[
+            None,
             Some(8_887_000_000),
             None,
             None,
@@ -794,23 +858,23 @@ mod tests {
         ]);
 
         let a_slice = a.slice(0, 3);
-        let b_slice = b.slice(0, 3);
+        let b_slice = b.slice(1, 3);
         test_equal(&a_slice, &b_slice, true);
 
         let a_slice = a.slice(0, 5);
-        let b_slice = b.slice(0, 5);
+        let b_slice = b.slice(1, 5);
         test_equal(&a_slice, &b_slice, false);
 
         let a_slice = a.slice(4, 1);
-        let b_slice = b.slice(4, 1);
+        let b_slice = b.slice(5, 1);
         test_equal(&a_slice, &b_slice, true);
 
         let a_slice = a.slice(3, 3);
-        let b_slice = b.slice(3, 3);
+        let b_slice = b.slice(4, 3);
         test_equal(&a_slice, &b_slice, false);
 
         let a_slice = a.slice(1, 3);
-        let b_slice = b.slice(1, 3);
+        let b_slice = b.slice(2, 3);
         test_equal(&a_slice, &b_slice, false);
 
         let b = create_decimal_array(&[
@@ -829,7 +893,7 @@ mod tests {
     /// Create a fixed size list of 2 value lengths
     fn create_fixed_size_list_array<U: AsRef<[i32]>, T: AsRef<[Option<U>]>>(
         data: T,
-    ) -> ArrayDataRef {
+    ) -> ArrayData {
         let mut builder = FixedSizeListBuilder::new(Int32Builder::new(10), 3);
 
         for d in data.as_ref() {
@@ -843,17 +907,17 @@ mod tests {
                 builder.append(false).unwrap()
             }
         }
-        builder.finish().data()
+        builder.finish().data().clone()
     }
 
     #[test]
     fn test_fixed_size_list_equal() {
         let a = create_fixed_size_list_array(&[Some(&[1, 2, 3]), Some(&[4, 5, 6])]);
         let b = create_fixed_size_list_array(&[Some(&[1, 2, 3]), Some(&[4, 5, 6])]);
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         let b = create_fixed_size_list_array(&[Some(&[1, 2, 3]), Some(&[4, 5, 7])]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
     }
 
     // Test the case where null_count > 0
@@ -875,7 +939,7 @@ mod tests {
             None,
             None,
         ]);
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         let b = create_fixed_size_list_array(&[
             Some(&[1, 2, 3]),
@@ -885,7 +949,7 @@ mod tests {
             None,
             None,
         ]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
 
         let b = create_fixed_size_list_array(&[
             Some(&[1, 2, 3]),
@@ -895,7 +959,7 @@ mod tests {
             None,
             None,
         ]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
     }
 
     #[test]
@@ -950,14 +1014,13 @@ mod tests {
 
         let a =
             StructArray::try_from(vec![("f1", strings.clone()), ("f2", ints.clone())])
-                .unwrap()
-                .data();
+                .unwrap();
+        let a = a.data();
 
-        let b = StructArray::try_from(vec![("f1", strings), ("f2", ints)])
-            .unwrap()
-            .data();
+        let b = StructArray::try_from(vec![("f1", strings), ("f2", ints)]).unwrap();
+        let b = b.data();
 
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
     }
 
     #[test]
@@ -1125,7 +1188,7 @@ mod tests {
         test_equal(a.data_ref(), c.data_ref(), false);
     }
 
-    fn create_dictionary_array(values: &[&str], keys: &[Option<&str>]) -> ArrayDataRef {
+    fn create_dictionary_array(values: &[&str], keys: &[Option<&str>]) -> ArrayData {
         let values = StringArray::from(values.to_vec());
         let mut builder = StringDictionaryBuilder::new_with_dictionary(
             PrimitiveBuilder::<Int16Type>::new(3),
@@ -1139,7 +1202,7 @@ mod tests {
                 builder.append_null().unwrap()
             }
         }
-        builder.finish().data()
+        builder.finish().data().clone()
     }
 
     #[test]
@@ -1154,26 +1217,26 @@ mod tests {
             &["a", "c", "b"],
             &[Some("a"), Some("b"), Some("a"), Some("c")],
         );
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         // different len
         let b =
             create_dictionary_array(&["a", "c", "b"], &[Some("a"), Some("b"), Some("a")]);
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
 
         // different key
         let b = create_dictionary_array(
             &["a", "c", "b"],
             &[Some("a"), Some("b"), Some("a"), Some("a")],
         );
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
 
         // different values, same keys
         let b = create_dictionary_array(
             &["a", "b", "d"],
             &[Some("a"), Some("b"), Some("a"), Some("d")],
         );
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
     }
 
     #[test]
@@ -1185,34 +1248,34 @@ mod tests {
         );
 
         // equal to self
-        test_equal(a.as_ref(), a.as_ref(), true);
+        test_equal(&a, &a, true);
 
         // different representation (values and keys are swapped), same result
         let b = create_dictionary_array(
             &["a", "c", "b"],
             &[Some("a"), None, Some("a"), Some("c")],
         );
-        test_equal(a.as_ref(), b.as_ref(), true);
+        test_equal(&a, &b, true);
 
         // different null position
         let b = create_dictionary_array(
             &["a", "c", "b"],
             &[Some("a"), Some("b"), Some("a"), None],
         );
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
 
         // different key
         let b = create_dictionary_array(
             &["a", "c", "b"],
             &[Some("a"), None, Some("a"), Some("a")],
         );
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
 
         // different values, same keys
         let b = create_dictionary_array(
             &["a", "b", "d"],
             &[Some("a"), None, Some("a"), Some("d")],
         );
-        test_equal(a.as_ref(), b.as_ref(), false);
+        test_equal(&a, &b, false);
     }
 }

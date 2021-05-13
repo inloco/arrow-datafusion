@@ -137,6 +137,20 @@ def test_special_chars_filename(tempdir, use_legacy_dataset):
     assert table_read.equals(table)
 
 
+@parametrize_legacy_dataset
+def test_invalid_source(use_legacy_dataset):
+    # Test that we provide an helpful error message pointing out
+    # that None wasn't expected when trying to open a Parquet None file.
+    #
+    # Depending on use_legacy_dataset the message changes slightly
+    # but in both cases it should point out that None wasn't expected.
+    with pytest.raises(TypeError, match="None"):
+        pq.read_table(None, use_legacy_dataset=use_legacy_dataset)
+
+    with pytest.raises(TypeError, match="None"):
+        pq.ParquetFile(None)
+
+
 @pytest.mark.slow
 def test_file_with_over_int16_max_row_groups():
     # PARQUET-1857: Parquet encryption support introduced a INT16_MAX upper
@@ -570,3 +584,17 @@ def test_empty_row_groups(tempdir):
 
     for i in range(num_groups):
         assert reader.read_row_group(i).equals(table)
+
+
+def test_reads_over_batch(tempdir):
+    data = [None] * (1 << 20)
+    data.append([1])
+    # Large list<int64> with mostly nones and one final
+    # value.  This should force batched reads when
+    # reading back.
+    table = pa.Table.from_arrays([data], ['column'])
+
+    path = tempdir / 'arrow-11607.parquet'
+    pq.write_table(table, path)
+    table2 = pq.read_table(path)
+    assert table == table2

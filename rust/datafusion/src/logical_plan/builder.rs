@@ -39,6 +39,43 @@ use crate::logical_plan::{DFField, DFSchema, DFSchemaRef, Partitioning};
 use std::collections::HashSet;
 
 /// Builder for logical plans
+///
+/// ```
+/// # use datafusion::prelude::*;
+/// # use datafusion::logical_plan::LogicalPlanBuilder;
+/// # use datafusion::error::Result;
+/// # use arrow::datatypes::{Schema, DataType, Field};
+/// #
+/// # fn main() -> Result<()> {
+/// #
+/// # fn employee_schema() -> Schema {
+/// #    Schema::new(vec![
+/// #           Field::new("id", DataType::Int32, false),
+/// #           Field::new("first_name", DataType::Utf8, false),
+/// #           Field::new("last_name", DataType::Utf8, false),
+/// #           Field::new("state", DataType::Utf8, false),
+/// #           Field::new("salary", DataType::Int32, false),
+/// #       ])
+/// #   }
+/// #
+/// // Create a plan similar to
+/// // SELECT last_name
+/// // FROM employees
+/// // WHERE salary < 1000
+/// let plan = LogicalPlanBuilder::scan_empty(
+///              "employee.csv",
+///              &employee_schema(),
+///              None,
+///            )?
+///            // Keep only rows where salary < 1000
+///            .filter(col("salary").lt_eq(lit(1000)))?
+///            // only show "last_name" in the final results
+///            .project(vec![col("last_name")])?
+///            .build()?;
+///
+/// # Ok(())
+/// # }
+/// ```
 pub struct LogicalPlanBuilder {
     plan: LogicalPlan,
 }
@@ -115,7 +152,7 @@ impl LogicalPlanBuilder {
     /// Convert a table provider into a builder with a TableScan
     pub fn scan(
         name: &str,
-        provider: Arc<dyn TableProvider + Send + Sync>,
+        provider: Arc<dyn TableProvider>,
         projection: Option<Vec<usize>>,
         alias: Option<String>,
     ) -> Result<Self> {
@@ -134,6 +171,7 @@ impl LogicalPlanBuilder {
             projection,
             filters: vec![],
             alias,
+            limit: None,
         };
 
         Ok(Self::from(&table_scan))
@@ -145,18 +183,21 @@ impl LogicalPlanBuilder {
     /// This function errors under any of the following conditions:
     /// * Two or more expressions have the same name
     /// * An invalid expression is used (e.g. a `sort` expression)
-    pub fn project(&self, expr: Vec<Expr>) -> Result<Self> {
+    pub fn project(&self, expr: impl IntoIterator<Item = Expr>) -> Result<Self> {
         let input_schema = self.plan.schema();
         let mut projected_expr = vec![];
-        (0..expr.len()).for_each(|i| match &expr[i] {
-            Expr::Wildcard => {
-                (0..input_schema.fields().len())
-                    .for_each(|i| projected_expr.push(col(input_schema.field(i).name())));
-            }
-            _ => projected_expr.push(expr[i].clone()),
-        });
+        for e in expr {
+            match e {
+                Expr::Wildcard => {
+                    (0..input_schema.fields().len()).for_each(|i| {
+                        projected_expr.push(col(input_schema.field(i).name()))
+                    });
+                }
+                _ => projected_expr.push(e),
+            };
+        }
 
-        validate_unique_names("Projections", &projected_expr, input_schema)?;
+        validate_unique_names("Projections", projected_expr.iter(), input_schema)?;
 
         let schema = DFSchema::new(exprlist_to_fields(&projected_expr, input_schema)?)?;
 
@@ -192,10 +233,33 @@ impl LogicalPlanBuilder {
     }
 
     /// Apply a sort
-    pub fn sort(&self, expr: Vec<Expr>) -> Result<Self> {
+    pub fn sort(&self, expr: impl IntoIterator<Item = Expr>) -> Result<Self> {
         Ok(Self::from(&LogicalPlan::Sort {
-            expr,
+            expr: expr.into_iter().collect(),
             input: Arc::new(self.plan.clone()),
+        }))
+    }
+
+    /// Apply a union
+    pub fn union(&self, plan: LogicalPlan) -> Result<Self> {
+        let schema = self.plan.schema();
+
+        if plan.schema() != schema {
+            return Err(DataFusionError::Plan(
+                "Schema's for union should be the same ".to_string(),
+            ));
+        }
+        // Add plan to existing union if possible
+        let mut inputs = match &self.plan {
+            LogicalPlan::Union { inputs, .. } => inputs.clone(),
+            _ => vec![self.plan.clone()],
+        };
+        inputs.push(plan);
+
+        Ok(Self::from(&LogicalPlan::Union {
+            inputs,
+            schema: schema.clone(),
+            alias: None,
         }))
     }
 
@@ -222,11 +286,7 @@ impl LogicalPlanBuilder {
             Ok(Self::from(&LogicalPlan::Join {
                 left: Arc::new(self.plan.clone()),
                 right: Arc::new(right.clone()),
-                on: left_keys
-                    .iter()
-                    .zip(right_keys.iter())
-                    .map(|(l, r)| (l.to_string(), r.to_string()))
-                    .collect(),
+                on,
                 join_type,
                 schema: DFSchemaRef::new(join_schema),
             }))
@@ -241,15 +301,23 @@ impl LogicalPlanBuilder {
         }))
     }
 
-    /// Apply an aggregate
-    pub fn aggregate(&self, group_expr: Vec<Expr>, aggr_expr: Vec<Expr>) -> Result<Self> {
-        let mut all_expr: Vec<Expr> = group_expr.clone();
-        aggr_expr.iter().for_each(|x| all_expr.push(x.clone()));
+    /// Apply an aggregate: grouping on the `group_expr` expressions
+    /// and calculating `aggr_expr` aggregates for each distinct
+    /// value of the `group_expr`;
+    pub fn aggregate(
+        &self,
+        group_expr: impl IntoIterator<Item = Expr>,
+        aggr_expr: impl IntoIterator<Item = Expr>,
+    ) -> Result<Self> {
+        let group_expr = group_expr.into_iter().collect::<Vec<Expr>>();
+        let aggr_expr = aggr_expr.into_iter().collect::<Vec<Expr>>();
 
-        validate_unique_names("Aggregations", &all_expr, self.plan.schema())?;
+        let all_expr = group_expr.iter().chain(aggr_expr.iter());
+
+        validate_unique_names("Aggregations", all_expr.clone(), self.plan.schema())?;
 
         let aggr_schema =
-            DFSchema::new(exprlist_to_fields(&all_expr, self.plan.schema())?)?;
+            DFSchema::new(exprlist_to_fields(all_expr, self.plan.schema())?)?;
 
         Ok(Self::from(&LogicalPlan::Aggregate {
             input: Arc::new(self.plan.clone()),
@@ -332,13 +400,13 @@ fn build_join_schema(
 }
 
 /// Errors if one or more expressions have equal names.
-fn validate_unique_names(
+fn validate_unique_names<'a>(
     node_name: &str,
-    expressions: &[Expr],
+    expressions: impl IntoIterator<Item = &'a Expr>,
     input_schema: &DFSchema,
 ) -> Result<()> {
     let mut unique_names = HashMap::new();
-    expressions.iter().enumerate().try_for_each(|(position, expr)| {
+    expressions.into_iter().enumerate().try_for_each(|(position, expr)| {
         let name = expr.name(input_schema)?;
         match unique_names.get(&name) {
             None => {
@@ -438,6 +506,32 @@ mod tests {
     }
 
     #[test]
+    fn plan_builder_union_combined_single_union() -> Result<()> {
+        let plan = LogicalPlanBuilder::scan_empty(
+            "employee.csv",
+            &employee_schema(),
+            Some(vec![3, 4]),
+        )?;
+
+        let plan = plan
+            .union(plan.build()?)?
+            .union(plan.build()?)?
+            .union(plan.build()?)?
+            .build()?;
+
+        // output has only one union
+        let expected = "Union\
+        \n  TableScan: employee.csv projection=Some([3, 4])\
+        \n  TableScan: employee.csv projection=Some([3, 4])\
+        \n  TableScan: employee.csv projection=Some([3, 4])\
+        \n  TableScan: employee.csv projection=Some([3, 4])";
+
+        assert_eq!(expected, format!("{:?}", plan));
+
+        Ok(())
+    }
+
+    #[test]
     fn projection_non_unique_names() -> Result<()> {
         let plan = LogicalPlanBuilder::scan_empty(
             "employee.csv",
@@ -449,9 +543,12 @@ mod tests {
 
         match plan {
             Err(DataFusionError::Plan(e)) => {
-                assert_eq!(e, "Projections require unique expression names \
+                assert_eq!(
+                    e,
+                    "Projections require unique expression names \
                     but the expression \"#id\" at position 0 and \"#first_name AS id\" at \
-                    position 1 have the same name. Consider aliasing (\"AS\") one of them.");
+                    position 1 have the same name. Consider aliasing (\"AS\") one of them."
+                );
                 Ok(())
             }
             _ => Err(DataFusionError::Plan(
@@ -472,9 +569,12 @@ mod tests {
 
         match plan {
             Err(DataFusionError::Plan(e)) => {
-                assert_eq!(e, "Aggregations require unique expression names \
+                assert_eq!(
+                    e,
+                    "Aggregations require unique expression names \
                     but the expression \"#state\" at position 0 and \"SUM(#salary) AS state\" at \
-                    position 1 have the same name. Consider aliasing (\"AS\") one of them.");
+                    position 1 have the same name. Consider aliasing (\"AS\") one of them."
+                );
                 Ok(())
             }
             _ => Err(DataFusionError::Plan(
@@ -494,7 +594,7 @@ mod tests {
     }
 
     #[test]
-    fn stringified_plan() -> Result<()> {
+    fn stringified_plan() {
         let stringified_plan =
             StringifiedPlan::new(PlanType::LogicalPlan, "...the plan...");
         assert!(stringified_plan.should_display(true));
@@ -513,7 +613,5 @@ mod tests {
         );
         assert!(stringified_plan.should_display(true));
         assert!(!stringified_plan.should_display(false));
-
-        Ok(())
     }
 }

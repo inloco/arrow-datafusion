@@ -83,16 +83,9 @@ fn get_num_rows(logical_plan: &LogicalPlan) -> Option<usize> {
         // the following operators do not modify row count in any way
         LogicalPlan::Projection { input, .. } => get_num_rows(input),
         LogicalPlan::Sort { input, .. } => get_num_rows(input),
+        // Add number of rows of below plans
         LogicalPlan::Union { inputs, .. } => {
-            let options = inputs
-                .iter()
-                .map(|i| get_num_rows(i.as_ref()))
-                .collect::<Vec<_>>();
-            if options.iter().all(|o| o.is_some()) {
-                Some(options.iter().map(|o| o.unwrap()).sum())
-            } else {
-                None
-            }
+            inputs.iter().map(|plan| get_num_rows(plan)).sum()
         }
     }
 }
@@ -113,7 +106,7 @@ impl OptimizerRule for HashBuildProbeOrder {
         "hash_build_probe_order"
     }
 
-    fn optimize(&mut self, plan: &LogicalPlan) -> Result<LogicalPlan> {
+    fn optimize(&self, plan: &LogicalPlan) -> Result<LogicalPlan> {
         match plan {
             // Main optimization rule, swaps order of left and right
             // based on number of rows in each table
@@ -163,10 +156,10 @@ impl OptimizerRule for HashBuildProbeOrder {
             | LogicalPlan::Explain { .. }
             | LogicalPlan::Union { .. }
             | LogicalPlan::Extension { .. } => {
-                let expr = utils::expressions(plan);
+                let expr = plan.expressions();
 
                 // apply the optimization to all inputs of the plan
-                let inputs = utils::inputs(plan);
+                let inputs = plan.inputs();
                 let new_inputs = inputs
                     .iter()
                     .map(|plan| self.optimize(plan))
@@ -221,6 +214,7 @@ mod tests {
             _projection: &Option<Vec<usize>>,
             _batch_size: usize,
             _filters: &[Expr],
+            _limit: Option<usize>,
         ) -> Result<std::sync::Arc<dyn crate::physical_plan::ExecutionPlan>> {
             unimplemented!()
         }
@@ -243,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn test_swap_order() -> Result<()> {
+    fn test_swap_order() {
         let lp_left = LogicalPlan::TableScan {
             table_name: "left".to_string(),
             projection: None,
@@ -251,6 +245,7 @@ mod tests {
             projected_schema: Arc::new(DFSchema::empty()),
             filters: vec![],
             alias: None,
+            limit: None,
         };
 
         let lp_right = LogicalPlan::TableScan {
@@ -260,11 +255,10 @@ mod tests {
             projected_schema: Arc::new(DFSchema::empty()),
             filters: vec![],
             alias: None,
+            limit: None,
         };
 
         assert!(should_swap_join_order(&lp_left, &lp_right));
         assert!(!should_swap_join_order(&lp_right, &lp_left));
-
-        Ok(())
     }
 }

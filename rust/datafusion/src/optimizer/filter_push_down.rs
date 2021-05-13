@@ -145,12 +145,13 @@ fn get_join_predicates<'a>(
 
 /// Optimizes the plan
 fn push_down(state: &State, plan: &LogicalPlan) -> Result<LogicalPlan> {
-    let new_inputs = utils::inputs(&plan)
+    let new_inputs = plan
+        .inputs()
         .iter()
         .map(|input| optimize(input, state.clone()))
         .collect::<Result<Vec<_>>>()?;
 
-    let expr = utils::expressions(&plan);
+    let expr = plan.expressions();
     utils::from_plan(&plan, &expr, &new_inputs)
 }
 
@@ -325,7 +326,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             // optimize inner
             let new_input = optimize(input, state)?;
 
-            utils::from_plan(&plan, &expr, &vec![new_input])
+            utils::from_plan(&plan, &expr, &[new_input])
         }
         LogicalPlan::Union { schema, .. } => {
             let used_columns = plan
@@ -429,7 +430,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             let right = optimize(right, right_state)?;
 
             // create a new Join with the new `left` and `right`
-            let expr = utils::expressions(&plan);
+            let expr = plan.expressions();
             let convert_to_inner = match join_type {
                 JoinType::Left => right_not_null,
                 JoinType::Right => left_not_null,
@@ -444,7 +445,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                     join_type: JoinType::Inner,
                 }
             } else {
-                utils::from_plan(&plan, &expr, &vec![left, right])?
+                utils::from_plan(&plan, &expr, &[left, right])?
             };
 
             if keep.0.is_empty() {
@@ -464,6 +465,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             projection,
             table_name,
             alias,
+            limit,
         } => {
             let mut used_columns = HashSet::new();
             let mut new_filters = filters.clone();
@@ -498,6 +500,7 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                     table_name: table_name.clone(),
                     filters: new_filters,
                     alias: alias.clone(),
+                    limit: *limit,
                 },
             )
         }
@@ -541,7 +544,7 @@ impl OptimizerRule for FilterPushDown {
         "filter_push_down"
     }
 
-    fn optimize(&mut self, plan: &LogicalPlan) -> Result<LogicalPlan> {
+    fn optimize(&self, plan: &LogicalPlan) -> Result<LogicalPlan> {
         optimize(plan, State::default())
     }
 }
@@ -585,7 +588,7 @@ mod tests {
     use arrow::datatypes::SchemaRef;
 
     fn assert_optimized_plan_eq(plan: &LogicalPlan, expected: &str) {
-        let mut rule = FilterPushDown::new();
+        let rule = FilterPushDown::new();
         let optimized_plan = rule.optimize(plan).expect("failed to optimize plan");
         let formatted_plan = format!("{:?}", optimized_plan);
         assert_eq!(formatted_plan, expected);
@@ -1136,6 +1139,7 @@ mod tests {
             _: &Option<Vec<usize>>,
             _: usize,
             _: &[Expr],
+            _: Option<usize>,
         ) -> Result<Arc<dyn ExecutionPlan>> {
             unimplemented!()
         }
@@ -1171,6 +1175,7 @@ mod tests {
             projection: None,
             source: Arc::new(test_provider),
             alias: None,
+            limit: None,
         };
 
         LogicalPlanBuilder::from(&table_scan)

@@ -18,8 +18,6 @@
 ARG FROM=ubuntu:focal
 FROM ${FROM}
 
-COPY qemu-* /usr/bin/
-
 RUN \
   echo "debconf debconf/frontend select Noninteractive" | \
     debconf-set-selections
@@ -34,14 +32,14 @@ RUN \
   apt update ${quiet} && \
   apt install -y -V ${quiet} \
     build-essential \
-    clang-10 \
+    ccache \
+    clang \
     cmake \
     debhelper \
     devscripts \
     git \
     gtk-doc-tools \
     libboost-filesystem-dev \
-    libboost-regex-dev \
     libboost-system-dev \
     libbrotli-dev \
     libbz2-dev \
@@ -58,7 +56,7 @@ RUN \
     libthrift-dev \
     libutf8proc-dev \
     libzstd-dev \
-    llvm-10-dev \
+    llvm-dev \
     lsb-release \
     ninja-build \
     pkg-config \

@@ -112,6 +112,7 @@ impl ExecutionPlan for CoalesceBatchesExec {
             target_batch_size: self.target_batch_size,
             buffer: Vec::new(),
             buffered_rows: 0,
+            is_closed: false,
         }))
     }
 }
@@ -127,6 +128,8 @@ struct CoalesceBatchesStream {
     buffer: Vec<RecordBatch>,
     /// Buffered row count
     buffered_rows: usize,
+    /// Whether the stream has finished returning all of its data or not
+    is_closed: bool,
 }
 
 impl Stream for CoalesceBatchesStream {
@@ -136,6 +139,9 @@ impl Stream for CoalesceBatchesStream {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
+        if self.is_closed {
+            return Poll::Ready(None);
+        }
         loop {
             let input_batch = self.input.poll_next_unpin(cx);
             match input_batch {
@@ -168,6 +174,7 @@ impl Stream for CoalesceBatchesStream {
                         }
                     }
                     None => {
+                        self.is_closed = true;
                         // we have reached the end of the input stream but there could still
                         // be buffered batches
                         if self.buffer.is_empty() {
@@ -211,6 +218,9 @@ pub fn concat_batches(
     batches: &[RecordBatch],
     row_count: usize,
 ) -> ArrowResult<RecordBatch> {
+    if batches.is_empty() {
+        return Ok(RecordBatch::new_empty(schema.clone()));
+    }
     let mut arrays = Vec::with_capacity(schema.fields().len());
     for i in 0..schema.fields().len() {
         let array = concat(
@@ -232,17 +242,17 @@ pub fn concat_batches(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physical_plan::memory::MemoryExec;
+    use crate::physical_plan::{memory::MemoryExec, repartition::RepartitionExec};
     use arrow::array::UInt32Array;
     use arrow::datatypes::{DataType, Field, Schema};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_concat_batches() -> Result<()> {
         let schema = test_schema();
-        let partition = create_vec_batches(&schema, 10)?;
+        let partition = create_vec_batches(&schema, 10);
         let partitions = vec![partition];
 
-        let output_partitions = coalesce_batches(&schema, partitions, 20).await?;
+        let output_partitions = coalesce_batches(&schema, partitions, 21).await?;
         assert_eq!(1, output_partitions.len());
 
         // input is 10 batches x 8 rows (80 rows)
@@ -261,16 +271,13 @@ mod tests {
         Arc::new(Schema::new(vec![Field::new("c0", DataType::UInt32, false)]))
     }
 
-    fn create_vec_batches(
-        schema: &Arc<Schema>,
-        num_batches: usize,
-    ) -> Result<Vec<RecordBatch>> {
+    fn create_vec_batches(schema: &Arc<Schema>, num_batches: usize) -> Vec<RecordBatch> {
         let batch = create_batch(schema);
         let mut vec = Vec::with_capacity(num_batches);
         for _ in 0..num_batches {
             vec.push(batch.clone());
         }
-        Ok(vec)
+        vec
     }
 
     fn create_batch(schema: &Arc<Schema>) -> RecordBatch {
@@ -288,6 +295,8 @@ mod tests {
     ) -> Result<Vec<Vec<RecordBatch>>> {
         // create physical plan
         let exec = MemoryExec::try_new(&input_partitions, schema.clone(), None)?;
+        let exec =
+            RepartitionExec::try_new(Arc::new(exec), Partitioning::RoundRobinBatch(1))?;
         let exec: Arc<dyn ExecutionPlan> =
             Arc::new(CoalesceBatchesExec::new(Arc::new(exec), target_batch_size));
 

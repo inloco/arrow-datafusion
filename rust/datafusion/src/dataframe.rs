@@ -51,7 +51,7 @@ use async_trait::async_trait;
 /// # }
 /// ```
 #[async_trait]
-pub trait DataFrame {
+pub trait DataFrame: Send + Sync {
     /// Filter the DataFrame by column. Returns a new DataFrame only containing the
     /// specified columns.
     ///
@@ -61,11 +61,11 @@ pub trait DataFrame {
     /// # fn main() -> Result<()> {
     /// let mut ctx = ExecutionContext::new();
     /// let df = ctx.read_csv("tests/example.csv", CsvReadOptions::new())?;
-    /// let df = df.select_columns(vec!["a", "b"])?;
+    /// let df = df.select_columns(&["a", "b"])?;
     /// # Ok(())
     /// # }
     /// ```
-    fn select_columns(&self, columns: Vec<&str>) -> Result<Arc<dyn DataFrame>>;
+    fn select_columns(&self, columns: &[&str]) -> Result<Arc<dyn DataFrame>>;
 
     /// Create a projection based on arbitrary expressions.
     ///
@@ -131,6 +131,20 @@ pub trait DataFrame {
     /// # }
     /// ```
     fn limit(&self, n: usize) -> Result<Arc<dyn DataFrame>>;
+
+    /// Calculate the union two [`DataFrame`]s.  The two [`DataFrame`]s must have exactly the same schema
+    ///
+    /// ```
+    /// # use datafusion::prelude::*;
+    /// # use datafusion::error::Result;
+    /// # fn main() -> Result<()> {
+    /// let mut ctx = ExecutionContext::new();
+    /// let df = ctx.read_csv("tests/example.csv", CsvReadOptions::new())?;
+    /// let df = df.union(df.clone())?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn union(&self, dataframe: Arc<dyn DataFrame>) -> Result<Arc<dyn DataFrame>>;
 
     /// Sort the DataFrame by the specified sorting expressions. Any expression can be turned into
     /// a sort expression by calling its [sort](../logical_plan/enum.Expr.html#method.sort) method.
@@ -205,6 +219,22 @@ pub trait DataFrame {
     /// # }
     /// ```
     async fn collect(&self) -> Result<Vec<RecordBatch>>;
+
+    /// Executes this DataFrame and collects all results into a vector of vector of RecordBatch
+    /// maintaining the input partitioning.
+    ///
+    /// ```
+    /// # use datafusion::prelude::*;
+    /// # use datafusion::error::Result;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<()> {
+    /// let mut ctx = ExecutionContext::new();
+    /// let df = ctx.read_csv("tests/example.csv", CsvReadOptions::new())?;
+    /// let batches = df.collect_partitioned().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    async fn collect_partitioned(&self) -> Result<Vec<Vec<RecordBatch>>>;
 
     /// Returns the schema describing the output of this DataFrame in terms of columns returned,
     /// where each column has a name, data type, and nullability attribute.

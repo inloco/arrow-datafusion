@@ -99,11 +99,11 @@ pub(crate) fn new_buffers(data_type: &DataType, capacity: usize) -> [MutableBuff
             MutableBuffer::new(capacity * mem::size_of::<f64>()),
             empty_buffer,
         ],
-        DataType::Date32(_) | DataType::Time32(_) => [
+        DataType::Date32 | DataType::Time32(_) => [
             MutableBuffer::new(capacity * mem::size_of::<i32>()),
             empty_buffer,
         ],
-        DataType::Date64(_)
+        DataType::Date64
         | DataType::Time64(_)
         | DataType::Duration(_)
         | DataType::Timestamp(_, _) => [
@@ -233,7 +233,7 @@ pub struct ArrayData {
 
     /// The child(ren) of this array. Only non-empty for nested types, currently
     /// `ListArray` and `StructArray`.
-    child_data: Vec<ArrayDataRef>,
+    child_data: Vec<ArrayData>,
 
     /// The null bitmap. A `None` value for this indicates all values are non-null in
     /// this array.
@@ -250,7 +250,7 @@ impl ArrayData {
         null_bit_buffer: Option<Buffer>,
         offset: usize,
         buffers: Vec<Buffer>,
-        child_data: Vec<ArrayDataRef>,
+        child_data: Vec<ArrayData>,
     ) -> Self {
         let null_count = match null_count {
             None => count_nulls(null_bit_buffer.as_ref(), offset, len),
@@ -286,7 +286,7 @@ impl ArrayData {
     }
 
     /// Returns a slice of children data arrays
-    pub fn child_data(&self) -> &[ArrayDataRef] {
+    pub fn child_data(&self) -> &[ArrayData] {
         &self.child_data[..]
     }
 
@@ -406,7 +406,7 @@ impl ArrayData {
     /// * the buffer is not byte-aligned with type T, or
     /// * the datatype is `Boolean` (it corresponds to a bit-packed buffer where the offset is not applicable)
     #[inline]
-    pub(super) fn buffer<T: ArrowNativeType>(&self, buffer: usize) -> &[T] {
+    pub(crate) fn buffer<T: ArrowNativeType>(&self, buffer: usize) -> &[T] {
         let values = unsafe { self.buffers[buffer].as_slice().align_to::<T>() };
         if !values.0.is_empty() || !values.2.is_empty() {
             panic!("The buffer is not byte-aligned with its interpretation")
@@ -435,8 +435,8 @@ impl ArrayData {
             | DataType::Int64Decimal(_)
             | DataType::Float32
             | DataType::Float64
-            | DataType::Date32(_)
-            | DataType::Date64(_)
+            | DataType::Date32
+            | DataType::Date64
             | DataType::Time32(_)
             | DataType::Time64(_)
             | DataType::Duration(_)
@@ -448,20 +448,22 @@ impl ArrayData {
             | DataType::Interval(_)
             | DataType::FixedSizeBinary(_)
             | DataType::Decimal(_, _) => vec![],
-            DataType::List(field) => vec![Arc::new(Self::new_empty(field.data_type()))],
+            DataType::List(field) => {
+                vec![Self::new_empty(field.data_type())]
+            }
             DataType::FixedSizeList(field, _) => {
-                vec![Arc::new(Self::new_empty(field.data_type()))]
+                vec![Self::new_empty(field.data_type())]
             }
             DataType::LargeList(field) => {
-                vec![Arc::new(Self::new_empty(field.data_type()))]
+                vec![Self::new_empty(field.data_type())]
             }
             DataType::Struct(fields) => fields
                 .iter()
-                .map(|field| Arc::new(Self::new_empty(field.data_type())))
+                .map(|field| Self::new_empty(field.data_type()))
                 .collect(),
             DataType::Union(_) => unimplemented!(),
             DataType::Dictionary(_, data_type) => {
-                vec![Arc::new(Self::new_empty(data_type))]
+                vec![Self::new_empty(data_type)]
             }
             DataType::Float16 => unreachable!(),
         };
@@ -485,7 +487,7 @@ pub struct ArrayDataBuilder {
     null_bit_buffer: Option<Buffer>,
     offset: usize,
     buffers: Vec<Buffer>,
-    child_data: Vec<ArrayDataRef>,
+    child_data: Vec<ArrayData>,
 }
 
 impl ArrayDataBuilder {
@@ -529,18 +531,18 @@ impl ArrayDataBuilder {
         self
     }
 
-    pub fn child_data(mut self, v: Vec<ArrayDataRef>) -> Self {
+    pub fn child_data(mut self, v: Vec<ArrayData>) -> Self {
         self.child_data = v;
         self
     }
 
-    pub fn add_child_data(mut self, r: ArrayDataRef) -> Self {
+    pub fn add_child_data(mut self, r: ArrayData) -> Self {
         self.child_data.push(r);
         self
     }
 
-    pub fn build(self) -> ArrayDataRef {
-        let data = ArrayData::new(
+    pub fn build(self) -> ArrayData {
+        ArrayData::new(
             self.data_type,
             self.len,
             self.null_count,
@@ -548,16 +550,13 @@ impl ArrayDataBuilder {
             self.offset,
             self.buffers,
             self.child_data,
-        );
-        Arc::new(data)
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::sync::Arc;
 
     use crate::buffer::Buffer;
     use crate::util::bit_util;
@@ -575,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let child_arr_data = Arc::new(ArrayData::new(
+        let child_arr_data = ArrayData::new(
             DataType::Int32,
             5,
             Some(0),
@@ -583,7 +582,7 @@ mod tests {
             0,
             vec![Buffer::from_slice_ref(&[1i32, 2, 3, 4, 5])],
             vec![],
-        ));
+        );
         let v = vec![0, 1, 2, 3];
         let b1 = Buffer::from(&v[..]);
         let arr_data = ArrayData::builder(DataType::Int32)
@@ -654,7 +653,6 @@ mod tests {
             .len(16)
             .null_bit_buffer(Buffer::from(bit_v))
             .build();
-        let data = data.as_ref();
         let new_data = data.slice(1, 15);
         assert_eq!(data.len() - 1, new_data.len());
         assert_eq!(1, new_data.offset());

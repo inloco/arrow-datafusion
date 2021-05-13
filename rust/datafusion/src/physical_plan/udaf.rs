@@ -18,6 +18,7 @@
 //! This module contains functions and structs supporting user-defined aggregate functions.
 
 use fmt::{Debug, Formatter};
+use std::any::Any;
 use std::fmt;
 
 use arrow::{datatypes::DataType, datatypes::Field};
@@ -100,7 +101,7 @@ impl AggregateUDF {
 /// This function errors when `args`' can't be coerced to a valid argument type of the UDAF.
 pub fn create_aggregate_expr(
     fun: &AggregateUDF,
-    args: &Vec<Arc<dyn PhysicalExpr>>,
+    args: &[Arc<dyn PhysicalExpr>],
     input_schema: &DFSchema,
     name: String,
 ) -> Result<Arc<dyn AggregateExpr>> {
@@ -130,6 +131,11 @@ pub struct AggregateFunctionExpr {
 }
 
 impl AggregateExpr for AggregateFunctionExpr {
+    /// Return a reference to Any that can be used for downcasting
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn expressions(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         self.args.clone()
     }

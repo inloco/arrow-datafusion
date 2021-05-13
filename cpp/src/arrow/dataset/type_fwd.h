@@ -30,6 +30,7 @@ namespace arrow {
 namespace compute {
 
 class ExecContext;
+class Expression;
 
 }  // namespace compute
 
@@ -46,6 +47,8 @@ class Fragment;
 using FragmentIterator = Iterator<std::shared_ptr<Fragment>>;
 using FragmentVector = std::vector<std::shared_ptr<Fragment>>;
 
+class FragmentScanOptions;
+
 class FileSource;
 class FileFormat;
 class FileFragment;
@@ -58,17 +61,18 @@ struct FileSystemDatasetWriteOptions;
 class InMemoryDataset;
 
 class CsvFileFormat;
+struct CsvFragmentScanOptions;
 
 class IpcFileFormat;
 class IpcFileWriter;
 class IpcFileWriteOptions;
+class IpcFragmentScanOptions;
 
 class ParquetFileFormat;
 class ParquetFileFragment;
+class ParquetFragmentScanOptions;
 class ParquetFileWriter;
 class ParquetFileWriteOptions;
-
-class Expression;
 
 class Partitioning;
 class PartitioningFactory;
@@ -76,9 +80,7 @@ class PartitioningOrFactory;
 class DirectoryPartitioning;
 class HivePartitioning;
 
-struct ScanContext;
-
-class ScanOptions;
+struct ScanOptions;
 
 class Scanner;
 
@@ -87,8 +89,6 @@ class ScannerBuilder;
 class ScanTask;
 using ScanTaskVector = std::vector<std::shared_ptr<ScanTask>>;
 using ScanTaskIterator = Iterator<std::shared_ptr<ScanTask>>;
-
-class RecordBatchProjector;
 
 }  // namespace dataset
 }  // namespace arrow

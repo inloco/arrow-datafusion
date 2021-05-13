@@ -124,8 +124,9 @@ mod tests {
         // Check offset and length for each non-null value.
         let limit_array: &ListArray =
             limit_array.as_any().downcast_ref::<ListArray>().unwrap();
+
         for i in 0..limit_array.len() {
-            let offset = limit_array.value_offset(i);
+            let offset = limit_array.value_offsets()[i];
             let length = limit_array.value_length(i);
             if i % 2 == 0 {
                 assert_eq!(2, length);
@@ -163,8 +164,8 @@ mod tests {
 
         assert_eq!(5, struct_array.len());
         assert_eq!(1, struct_array.null_count());
-        assert_eq!(boolean_data, struct_array.column(0).data());
-        assert_eq!(int_data, struct_array.column(1).data());
+        assert_eq!(&boolean_data, struct_array.column(0).data());
+        assert_eq!(&int_data, struct_array.column(1).data());
 
         let array: ArrayRef = Arc::new(struct_array);
 

@@ -18,8 +18,6 @@
 ARG FROM=centos:8
 FROM ${FROM}
 
-COPY qemu-* /usr/bin/
-
 ARG DEBUG
 
 RUN \
@@ -30,6 +28,7 @@ RUN \
     boost-devel \
     brotli-devel \
     bzip2-devel \
+    ccache \
     clang \
     cmake \
     curl-devel \

@@ -197,67 +197,6 @@ impl RecordBatchStream for MergeStream {
     }
 }
 
-/// UNION ALL execution plan
-#[derive(Debug)]
-pub struct UnionExec {
-    /// Input execution plan
-    inputs: Vec<Arc<dyn ExecutionPlan>>,
-}
-
-impl UnionExec {
-    /// Create a new MergeExec
-    pub fn new(inputs: Vec<Arc<dyn ExecutionPlan>>) -> Self {
-        UnionExec { inputs }
-    }
-}
-
-#[async_trait]
-impl ExecutionPlan for UnionExec {
-    /// Return a reference to Any that can be used for downcasting
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> DFSchemaRef {
-        self.inputs[0].schema()
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        self.inputs.clone()
-    }
-
-    /// Get the output partitioning of this plan
-    fn output_partitioning(&self) -> Partitioning {
-        Partitioning::UnknownPartitioning(self.inputs.len())
-    }
-
-    fn with_new_children(
-        &self,
-        children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        Ok(Arc::new(UnionExec::new(children)))
-    }
-
-    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
-        self.inputs[partition].execute(0).await
-    }
-
-    fn output_hints(&self) -> OptimizerHints {
-        if self.inputs.is_empty() {
-            return OptimizerHints::default();
-        }
-
-        let hints = self.inputs[0].output_hints();
-        for i in self.inputs.iter().skip(1) {
-            let other = i.output_hints();
-            if other != hints {
-                return OptimizerHints::default();
-            }
-        }
-        hints
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -274,8 +213,13 @@ mod tests {
         let path =
             test::create_partitioned_csv("aggregate_test_100.csv", num_partitions)?;
 
-        let csv =
-            CsvExec::try_new(&path, CsvReadOptions::new().schema(&schema), None, 1024)?;
+        let csv = CsvExec::try_new(
+            &path,
+            CsvReadOptions::new().schema(&schema),
+            None,
+            1024,
+            None,
+        )?;
 
         // input should have 4 partitions
         assert_eq!(csv.output_partitioning().partition_count(), num_partitions);

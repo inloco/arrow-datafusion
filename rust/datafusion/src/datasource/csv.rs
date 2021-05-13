@@ -66,7 +66,11 @@ impl CsvFile {
                 let mut filenames: Vec<String> = vec![];
                 common::build_file_list(path, &mut filenames, options.file_extension)?;
                 if filenames.is_empty() {
-                    return Err(DataFusionError::Plan("No files found".to_string()));
+                    return Err(DataFusionError::Plan(format!(
+                        "No files found at {path} with file extension {file_extension}",
+                        path = path,
+                        file_extension = options.file_extension
+                    )));
                 }
                 CsvExec::try_infer_schema(&filenames, &options)?
             }
@@ -117,6 +121,7 @@ impl TableProvider for CsvFile {
         projection: &Option<Vec<usize>>,
         batch_size: usize,
         _filters: &[Expr],
+        limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         Ok(Arc::new(CsvExec::try_new(
             &self.path,
@@ -126,7 +131,10 @@ impl TableProvider for CsvFile {
                 .delimiter(self.delimiter)
                 .file_extension(self.file_extension.as_str()),
             projection.clone(),
-            batch_size,
+            limit
+                .map(|l| std::cmp::min(l, batch_size))
+                .unwrap_or(batch_size),
+            limit,
         )?))
     }
 

@@ -23,7 +23,7 @@ use serde_json::Value;
 use arrow::util::integration_util::ArrowJsonBatch;
 
 use arrow::array::*;
-use arrow::datatypes::{DataType, DateUnit, Field, IntervalUnit, Schema};
+use arrow::datatypes::{DataType, Field, IntervalUnit, Schema};
 use arrow::error::{ArrowError, Result};
 use arrow::record_batch::RecordBatch;
 use arrow::{
@@ -163,7 +163,7 @@ fn array_from_json(
             Ok(Arc::new(b.finish()))
         }
         DataType::Int32
-        | DataType::Date32(DateUnit::Day)
+        | DataType::Date32
         | DataType::Time32(_)
         | DataType::Interval(IntervalUnit::YearMonth) => {
             let mut b = Int32Builder::new(json_col.count);
@@ -183,7 +183,7 @@ fn array_from_json(
             arrow::compute::cast(&array, field.data_type())
         }
         DataType::Int64
-        | DataType::Date64(DateUnit::Millisecond)
+        | DataType::Date64
         | DataType::Time64(_)
         | DataType::Timestamp(_, _)
         | DataType::Duration(_)
@@ -419,7 +419,7 @@ fn array_from_json(
                 .len(json_col.count)
                 .offset(0)
                 .add_buffer(Buffer::from(&offsets.to_byte_slice()))
-                .add_child_data(child_array.data())
+                .add_child_data(child_array.data().clone())
                 .null_bit_buffer(null_buf)
                 .build();
             Ok(Arc::new(ListArray::from(list_data)))
@@ -446,7 +446,7 @@ fn array_from_json(
                 .len(json_col.count)
                 .offset(0)
                 .add_buffer(Buffer::from(&offsets.to_byte_slice()))
-                .add_child_data(child_array.data())
+                .add_child_data(child_array.data().clone())
                 .null_bit_buffer(null_buf)
                 .build();
             Ok(Arc::new(LargeListArray::from(list_data)))
@@ -461,7 +461,7 @@ fn array_from_json(
             let null_buf = create_null_buf(&json_col);
             let list_data = ArrayData::builder(field.data_type().clone())
                 .len(json_col.count)
-                .add_child_data(child_array.data())
+                .add_child_data(child_array.data().clone())
                 .null_bit_buffer(null_buf)
                 .build();
             Ok(Arc::new(FixedSizeListArray::from(list_data)))
@@ -475,7 +475,7 @@ fn array_from_json(
 
             for (field, col) in fields.iter().zip(json_col.children.unwrap()) {
                 let array = array_from_json(field, col, dictionaries)?;
-                array_data = array_data.add_child_data(array.data());
+                array_data = array_data.add_child_data(array.data().clone());
             }
 
             let array = StructArray::from(array_data.build());
@@ -556,7 +556,7 @@ fn dictionary_array_from_json(
                 .len(keys.len())
                 .add_buffer(keys.data().buffers()[0].clone())
                 .null_bit_buffer(null_buf)
-                .add_child_data(values.data())
+                .add_child_data(values.data().clone())
                 .build();
 
             let array = match dict_key {
