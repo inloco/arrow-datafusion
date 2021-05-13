@@ -49,7 +49,7 @@ use std::collections::HashSet;
 /// ```
 /// # use datafusion::logical_plan::*;
 /// let expr = col("c1");
-/// assert_eq!(expr, Expr::Column("c1".to_string()));
+/// assert_eq!(expr, Expr::Column("c1".to_string(), None));
 /// ```
 ///
 /// ## Create the expression `c1 + c2` to add columns "c1" and "c2" together
