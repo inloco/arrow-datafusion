@@ -57,7 +57,6 @@ use crate::optimizer::filter_push_down::FilterPushDown;
 use crate::optimizer::limit_push_down::LimitPushDown;
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::projection_push_down::ProjectionPushDown;
-use crate::physical_optimizer::coalesce_batches::CoalesceBatches;
 use crate::physical_optimizer::merge_exec::AddMergeExec;
 use crate::physical_optimizer::repartition::Repartition;
 
@@ -644,7 +643,8 @@ impl ExecutionConfig {
                 Arc::new(LimitPushDown::new()),
             ],
             physical_optimizers: vec![
-                Arc::new(CoalesceBatches::new()),
+                // NOTE: disabled in the CubeStore fork.
+                // Arc::new(CoalesceBatches::new()),
                 Arc::new(Repartition::new()),
                 Arc::new(AddMergeExec::new()),
             ],
@@ -1212,7 +1212,7 @@ mod tests {
         .await
         .unwrap();
 
-        let expected: Vec<&str> = vec!["++", "++"];
+        let expected: Vec<&str> = vec!["++", "||", "++", "++"];
 
         assert_batches_eq!(expected, &results);
 
@@ -1352,7 +1352,8 @@ mod tests {
     async fn boolean_literal() -> Result<()> {
         let results =
             execute("SELECT c1, c3 FROM test WHERE c1 > 2 AND c3 = true", 4).await?;
-        assert_eq!(results.len(), 1);
+        // NOTE: fails in cubestore fork as we disable 'coalsce batches' optimization.
+        // assert_eq!(results.len(), 1);
 
         let expected = vec![
             "+----+------+",
