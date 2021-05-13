@@ -36,6 +36,7 @@ use crate::{
     data_type::*,
     file::writer::{FileWriter, ParquetWriter, RowGroupWriter, SerializedFileWriter},
 };
+use arrow::array::Int64Array;
 
 /// Arrow writer
 ///
@@ -245,6 +246,11 @@ fn write_leaf(
                         .as_any()
                         .downcast_ref::<arrow_array::Int64Array>()
                         .expect("Unable to get i64 array");
+                    get_numeric_array_slice::<Int64Type, _>(&array, &indices)
+                }
+                ArrowDataType::Int64Decimal(_) => {
+                    // If we call `cast` we loose the fractional part of decimal.
+                    let array = Int64Array::from(column.data().clone());
                     get_numeric_array_slice::<Int64Type, _>(&array, &indices)
                 }
                 _ => {
@@ -699,6 +705,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "CubeStore fork forces custom decimal type"]
     fn arrow_writer_decimal() {
         let decimal_field = Field::new("a", DataType::Decimal(5, 2), false);
         let schema = Schema::new(vec![decimal_field]);
@@ -738,6 +745,49 @@ mod tests {
 
         for i in 0..batch.num_rows() {
             assert_eq!(decimal_col.value(i), raw_decimal_i128_values[i]);
+        }
+    }
+
+    #[test]
+    fn arrow_writer_int64decimal() {
+        let decimal_field = Field::new("a", DataType::Int64Decimal(3), false);
+        let schema = Schema::new(vec![decimal_field]);
+
+        let mut dec_builder = Int64Decimal3Builder::new(4);
+        dec_builder.append_value(10_000).unwrap();
+        dec_builder.append_value(50_000).unwrap();
+        dec_builder.append_value(0).unwrap();
+        dec_builder.append_value(-100).unwrap();
+
+        let raw_decimal_values: Vec<i64> = vec![10_000, 50_000, 0, -100];
+        let decimal_values = dec_builder.finish();
+        let batch = RecordBatch::try_new(
+            Arc::new(schema.clone()),
+            vec![Arc::new(decimal_values)],
+        )
+        .unwrap();
+
+        let mut file = get_temp_file("test_arrow_writer_int64decimal.parquet", &[]);
+        let mut writer =
+            ArrowWriter::try_new(file.try_clone().unwrap(), Arc::new(schema), None)
+                .unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let file_reader = SerializedFileReader::new(file).unwrap();
+        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(file_reader));
+        let mut record_batch_reader = arrow_reader.get_record_reader(1024).unwrap();
+
+        let batch = record_batch_reader.next().unwrap().unwrap();
+        let decimal_col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Decimal3Array>()
+            .unwrap();
+
+        for i in 0..batch.num_rows() {
+            assert_eq!(decimal_col.value(i), raw_decimal_values[i]);
         }
     }
 

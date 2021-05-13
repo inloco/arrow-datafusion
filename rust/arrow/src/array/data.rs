@@ -406,7 +406,7 @@ impl ArrayData {
     /// * the buffer is not byte-aligned with type T, or
     /// * the datatype is `Boolean` (it corresponds to a bit-packed buffer where the offset is not applicable)
     #[inline]
-    pub(crate) fn buffer<T: ArrowNativeType>(&self, buffer: usize) -> &[T] {
+    pub fn buffer<T: ArrowNativeType>(&self, buffer: usize) -> &[T] {
         let values = unsafe { self.buffers[buffer].as_slice().align_to::<T>() };
         if !values.0.is_empty() || !values.2.is_empty() {
             panic!("The buffer is not byte-aligned with its interpretation")

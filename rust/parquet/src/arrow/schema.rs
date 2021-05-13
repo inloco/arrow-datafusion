@@ -1863,9 +1863,10 @@ mod tests {
                 //     true,
                 // ),
                 Field::new("c35", DataType::Null, true),
-                Field::new("c36", DataType::Decimal(2, 1), false),
-                Field::new("c37", DataType::Decimal(50, 20), false),
-                Field::new("c38", DataType::Decimal(18, 12), true),
+                // In CubeStore fork we read as Int64Decimal.
+                Field::new("c36", DataType::Int64Decimal(2), false),
+                Field::new("c37", DataType::Int64Decimal(10), false),
+                Field::new("c38", DataType::Int64Decimal(5), true),
             ],
             metadata,
         );
