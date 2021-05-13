@@ -24,6 +24,7 @@ use arrow::record_batch::RecordBatch;
 use crate::error::{DataFusionError, Result};
 use crate::logical_plan::DFSchema;
 use crate::physical_plan::{ColumnarValue, PhysicalExpr};
+use arrow::compute::cast;
 
 /// The CASE expression is similar to a series of nested if/else and there are two forms that
 /// can be used. The first form consists of a series of boolean "when" expressions with
@@ -472,12 +473,15 @@ impl CaseExpr {
                 array_equals(base_value.data_type(), when_value, base_value.clone())?;
 
             let return_type = then_value.data_type();
+            let else_value = current_value
+                .map(Ok)
+                .unwrap_or_else(|| build_null_array(return_type, batch.num_rows()))?;
+            // TODO: add casts during planning, see `binary_cast`.
+            let else_value = cast(&else_value, return_type)?;
             current_value = Some(if_then_else(
                 &when_match,
                 then_value.clone(),
-                current_value
-                    .map(Ok)
-                    .unwrap_or_else(|| build_null_array(return_type, batch.num_rows()))?,
+                else_value,
                 return_type,
             )?);
         }
@@ -516,12 +520,15 @@ impl CaseExpr {
             let then_value = then_value.into_array(batch.num_rows());
 
             let return_type = then_value.data_type();
+            let else_value = current_value
+                .map(Ok)
+                .unwrap_or_else(|| build_null_array(return_type, batch.num_rows()))?;
+            // TODO: add casts during planning, see `binary_cast`.
+            let else_value = cast(&else_value, return_type)?;
             current_value = Some(if_then_else(
                 &when_value,
                 then_value.clone(),
-                current_value
-                    .map(Ok)
-                    .unwrap_or_else(|| build_null_array(return_type, batch.num_rows()))?,
+                else_value,
                 return_type,
             )?);
         }
