@@ -185,8 +185,9 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                             "UNION ALL schemas are expected to be the same".to_string(),
                         ));
                     }
+                    let schema = Arc::new(inputs[0].schema().alias(alias.as_deref())?);
                     Ok(LogicalPlan::Union {
-                        schema: inputs[0].schema().clone(),
+                        schema,
                         inputs,
                         alias,
                     })

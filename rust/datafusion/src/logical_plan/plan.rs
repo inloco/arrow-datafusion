@@ -125,7 +125,7 @@ pub enum LogicalPlan {
     Union {
         /// Inputs to merge
         inputs: Vec<LogicalPlan>,
-        /// Union schema. Should be the same for all inputs.
+        /// Union output schema. Takes alias into account
         schema: DFSchemaRef,
         /// Union output relation alias
         alias: Option<String>,
