@@ -35,7 +35,9 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 
 use crate::logical_plan::{DFSchemaRef, Operator};
-use crate::physical_plan::expressions::{BinaryExpr, CastExpr, Column, Literal};
+use crate::physical_plan::expressions::{
+    BinaryExpr, CastExpr, Column, Literal, TryCastExpr,
+};
 use futures::stream::{Stream, StreamExt};
 
 /// FilterExec evaluates a boolean predicate against all input batches to determine which rows to
@@ -161,6 +163,8 @@ fn extract_single_value_columns_impl<'a>(
         if e.as_any().is::<Literal>() {
             return true;
         } else if let Some(c) = e.as_any().downcast_ref::<CastExpr>() {
+            e = c.expr().as_ref();
+        } else if let Some(c) = e.as_any().downcast_ref::<TryCastExpr>() {
             e = c.expr().as_ref();
         } else {
             return false;
