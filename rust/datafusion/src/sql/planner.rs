@@ -431,7 +431,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                         &table_name,
                         provider,
                         None,
-                        alias.as_ref().map(|a| a.to_string()),
+                        alias.as_ref().map(|a| a.name.value.clone()),
                     )?
                     .build(),
                     (_, None) => Err(DataFusionError::Plan(format!(
@@ -444,7 +444,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 subquery, alias, ..
             } => self.query_to_plan_with_alias(
                 subquery,
-                alias.as_ref().map(|a| a.name.value.to_string()),
+                alias.as_ref().map(|a| a.name.value.clone()),
                 ctes,
             ),
             TableFactor::NestedJoin(table_with_joins) => {

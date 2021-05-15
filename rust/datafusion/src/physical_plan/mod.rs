@@ -245,14 +245,16 @@ pub enum ColumnarValue {
 }
 
 impl ColumnarValue {
-    fn data_type(&self) -> DataType {
+    #[allow(missing_docs)]
+    pub fn data_type(&self) -> DataType {
         match self {
             ColumnarValue::Array(array_value) => array_value.data_type().clone(),
             ColumnarValue::Scalar(scalar_value) => scalar_value.get_datatype(),
         }
     }
 
-    fn into_array(self, num_rows: usize) -> ArrayRef {
+    #[allow(missing_docs)]
+    pub fn into_array(self, num_rows: usize) -> ArrayRef {
         match self {
             ColumnarValue::Array(array) => array,
             ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(num_rows),
