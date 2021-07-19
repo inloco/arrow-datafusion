@@ -1128,6 +1128,7 @@ pub(crate) fn create_batch_from_map(
             *mode,
             group_by_values,
             accumulator_set,
+            &output_schema.fields()[0..num_group_expr],
             &mut key_columns,
             &mut value_columns,
         )
@@ -1161,6 +1162,7 @@ pub fn write_group_result_row(
     mode: AggregateMode,
     group_by_values: &[GroupByScalar],
     accumulator_set: &AccumulatorSet,
+    key_fields: &[Field],
     key_columns: &mut Vec<Box<dyn ArrayBuilder>>,
     value_columns: &mut Vec<Box<dyn ArrayBuilder>>,
 ) -> Result<()> {
@@ -1179,7 +1181,7 @@ pub fn write_group_result_row(
                     .append_value(str)?;
             }
             v => {
-                let scalar = &ScalarValue::from(v);
+                let scalar = v.to_scalar(key_fields[i].data_type());
                 if add_key_columns {
                     key_columns.push(create_builder(&scalar));
                 }
@@ -1386,7 +1388,10 @@ fn dictionary_create_group_by_value<K: ArrowDictionaryKeyType>(
 }
 
 /// Extract the value in `col[row]` as a GroupByScalar
-fn create_group_by_value(col: &ArrayRef, row: usize) -> Result<GroupByScalar> {
+pub(crate) fn create_group_by_value(col: &ArrayRef, row: usize) -> Result<GroupByScalar> {
+    if col.is_null(row) {
+        return Ok(GroupByScalar::Null);
+    }
     match col.data_type() {
         DataType::Float32 => {
             let array = col.as_any().downcast_ref::<Float32Array>().unwrap();
@@ -1549,7 +1554,7 @@ async fn compute_grouped_sorted_aggregate(
             .map_err(DataFusionError::into_arrow_external_error)?;
 
         state
-            .add_batch(mode, &aggr_expr, &group_values, &aggr_input_values)
+            .add_batch(mode, &aggr_expr, &group_values, &aggr_input_values, &schema)
             .map_err(DataFusionError::into_arrow_external_error)?;
     }
     state.finish(mode, schema)

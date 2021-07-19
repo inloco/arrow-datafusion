@@ -20,13 +20,13 @@
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::group_scalar::GroupByScalar;
 use crate::physical_plan::hash_aggregate::{
-    create_accumulators, create_group_by_values, write_group_result_row, AccumulatorSet,
-    AggregateMode,
+    create_accumulators, create_group_by_value, create_group_by_values,
+    write_group_result_row, AccumulatorSet, AggregateMode,
 };
 use crate::physical_plan::AggregateExpr;
 use crate::scalar::ScalarValue;
 use arrow::array::{ArrayBuilder, ArrayRef, LargeStringArray, StringArray};
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use itertools::Itertools;
 use smallvec::smallvec;
@@ -67,6 +67,7 @@ impl SortedAggState {
                 mode,
                 &agg.key,
                 &agg.accumulators,
+                &schema.fields()[0..agg.key.len()],
                 &mut self.processed_keys,
                 &mut self.processed_values,
             )
@@ -91,6 +92,7 @@ impl SortedAggState {
         agg_exprs: &Vec<Arc<dyn AggregateExpr>>,
         key_columns: &[ArrayRef],
         aggr_input_values: &[Vec<ArrayRef>],
+        out_schema: &Schema,
     ) -> Result<()> {
         assert_ne!(key_columns.len(), 0);
         assert_eq!(aggr_input_values.len(), agg_exprs.len());
@@ -134,6 +136,7 @@ impl SortedAggState {
                     mode,
                     &current_agg.key,
                     &current_agg.accumulators,
+                    &out_schema.fields()[0..current_agg.key.len()],
                     &mut self.processed_keys,
                     &mut self.processed_values,
                 )?;
@@ -216,8 +219,7 @@ fn agg_key_equals(
                 }
             }
             l => {
-                let r = ScalarValue::try_from_array(&key_columns[i], row)?;
-                if ScalarValue::from(l) != r {
+                if l != &create_group_by_value(&key_columns[i], row)? {
                     return Ok(false);
                 }
             }

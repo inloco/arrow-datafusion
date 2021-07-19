@@ -200,7 +200,9 @@ impl Accumulator for DistinctCountAccumulator {
         self.values.iter().unique().for_each(|distinct_values| {
             distinct_values.0.iter().enumerate().for_each(
                 |(col_index, distinct_value)| {
-                    cols_vec[col_index].push(ScalarValue::from(distinct_value));
+                    cols_vec[col_index].push(
+                        distinct_value.to_scalar(&self.state_data_types[col_index]),
+                    );
                 },
             )
         });

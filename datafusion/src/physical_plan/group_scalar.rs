@@ -22,11 +22,13 @@ use std::convert::{From, TryFrom};
 
 use crate::error::{DataFusionError, Result};
 use crate::scalar::ScalarValue;
+use arrow::datatypes::DataType;
 
 /// Enumeration of types that can be used in a GROUP BY expression
 #[allow(missing_docs)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub enum GroupByScalar {
+    Null,
     Float32(OrderedFloat<f32>),
     Float64(OrderedFloat<f64>),
     UInt8(u8),
@@ -95,18 +97,10 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
             | ScalarValue::UInt32(None)
             | ScalarValue::UInt64(None)
             | ScalarValue::Utf8(None)
-            | ScalarValue::Int64Decimal(None, 0)
-            | ScalarValue::Int64Decimal(None, 1)
-            | ScalarValue::Int64Decimal(None, 2)
-            | ScalarValue::Int64Decimal(None, 3)
-            | ScalarValue::Int64Decimal(None, 4)
-            | ScalarValue::Int64Decimal(None, 5)
-            | ScalarValue::Int64Decimal(None, 10) => {
-                return Err(DataFusionError::Internal(format!(
-                    "Cannot convert a ScalarValue holding NULL ({:?})",
-                    scalar_value
-                )));
-            }
+            | ScalarValue::Int64Decimal(None, _)
+            | ScalarValue::TimestampMillisecond(None)
+            | ScalarValue::TimestampMicrosecond(None)
+            | ScalarValue::TimestampNanosecond(None) => GroupByScalar::Null,
             v => {
                 return Err(DataFusionError::Internal(format!(
                     "Cannot convert a ScalarValue with associated DataType {:?}",
@@ -117,9 +111,13 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
     }
 }
 
-impl From<&GroupByScalar> for ScalarValue {
-    fn from(group_by_scalar: &GroupByScalar) -> Self {
-        match group_by_scalar {
+impl GroupByScalar {
+    /// Convert to ScalarValue.
+    pub fn to_scalar(&self, ty: &DataType) -> ScalarValue {
+        let r = match self {
+            GroupByScalar::Null => {
+                ScalarValue::try_from(ty).expect("could not create null")
+            }
             GroupByScalar::Float32(v) => ScalarValue::Float32(Some((*v).into())),
             GroupByScalar::Float64(v) => ScalarValue::Float64(Some((*v).into())),
             GroupByScalar::Boolean(v) => ScalarValue::Boolean(Some(*v)),
@@ -147,7 +145,9 @@ impl From<&GroupByScalar> for ScalarValue {
                 ScalarValue::TimestampNanosecond(Some(*v))
             }
             GroupByScalar::Date32(v) => ScalarValue::Date32(Some(*v)),
-        }
+        };
+        debug_assert_eq!(&r.get_datatype(), ty);
+        r
     }
 }
 
@@ -199,14 +199,7 @@ mod tests {
     fn from_scalar_holding_none() {
         let scalar_value = ScalarValue::Int8(None);
         let result = GroupByScalar::try_from(&scalar_value);
-
-        match result {
-            Err(DataFusionError::Internal(error_message)) => assert_eq!(
-                error_message,
-                String::from("Cannot convert a ScalarValue holding NULL (Int8(NULL))")
-            ),
-            _ => panic!("Unexpected result"),
-        }
+        assert_eq!(result.unwrap(), GroupByScalar::Null);
     }
 
     #[test]
