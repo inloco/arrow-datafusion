@@ -390,13 +390,17 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
         match constraint {
             JoinConstraint::On(sql_expr) => {
                 let mut keys: Vec<(String, String)> = vec![];
-                let join_schema = left.schema().join(&right.schema())?;
+                let left_schema = left.schema();
+                let right_schema = right.schema();
+                let join_schema = left_schema.join(right_schema)?;
 
                 // parse ON expression
                 let expr = self.sql_to_rex(sql_expr, &join_schema)?;
 
                 // extract join keys
-                if let Err(e) = extract_join_keys(&expr, &mut keys) {
+                if let Err(e) =
+                    extract_join_keys(&expr, left_schema, right_schema, &mut keys)
+                {
                     // Complex condition, try cross join. We still prefer to **not** allow cross
                     // joins in general case to avoid abysmal performance.
                     // However, CubeStore needs this specific form for "rolling window" queries.
@@ -1558,15 +1562,27 @@ fn remove_join_expressions(
 /// foo = bar
 /// foo = bar AND bar = baz AND ...
 ///
-fn extract_join_keys(expr: &Expr, accum: &mut Vec<(String, String)>) -> Result<()> {
+fn extract_join_keys(
+    expr: &Expr,
+    ls: &DFSchema,
+    rs: &DFSchema,
+    accum: &mut Vec<(String, String)>,
+) -> Result<()> {
     match expr {
         Expr::BinaryExpr { left, op, right } => match op {
             Operator::Eq => match (left.as_ref(), right.as_ref()) {
                 (Expr::Column(l, la), Expr::Column(r, ra)) => {
-                    accum.push((
-                        Column::new_with_alias(l, la.clone()).full_name(),
-                        Column::new_with_alias(r, ra.clone()).full_name(),
-                    ));
+                    let mut lc = Column::new_with_alias(l, la.clone());
+                    let mut rc = Column::new_with_alias(r, ra.clone());
+                    // `L = R` and `R = L` are equivalent, handle the latter case.
+                    if ls.field_with_name(lc.relation(), lc.name()).is_err()
+                        && rs.field_with_name(lc.relation(), lc.name()).is_ok()
+                    {
+                        // Other cases should result in errors later, e.g. ambiguities in lookup.
+                        std::mem::swap(&mut lc, &mut rc)
+                    }
+
+                    accum.push((lc.full_name(), rc.full_name()));
                     Ok(())
                 }
                 other => Err(DataFusionError::SQL(ParserError(format!(
@@ -1575,8 +1591,8 @@ fn extract_join_keys(expr: &Expr, accum: &mut Vec<(String, String)>) -> Result<(
                 )))),
             },
             Operator::And => {
-                extract_join_keys(left, accum)?;
-                extract_join_keys(right, accum)
+                extract_join_keys(left, ls, rs, accum)?;
+                extract_join_keys(right, ls, rs, accum)
             }
             other => Err(DataFusionError::SQL(ParserError(format!(
                 "Unsupported expression '{:?}' in JOIN condition",

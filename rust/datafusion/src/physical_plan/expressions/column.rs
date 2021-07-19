@@ -50,6 +50,11 @@ impl Column {
         &self.name
     }
 
+    /// Get the column qualifier
+    pub fn relation(&self) -> Option<&str> {
+        self.relation.as_deref()
+    }
+
     /// Create a new column expression with alias
     pub fn new_with_alias(name: &str, relation: Option<String>) -> Self {
         Self {
