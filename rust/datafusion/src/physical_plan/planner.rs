@@ -197,12 +197,14 @@ impl DefaultPhysicalPlanner {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                let strategy = compute_aggregation_strategy(input_exec.as_ref(), &groups);
+                let (strategy, order) =
+                    compute_aggregation_strategy(input_exec.as_ref(), &groups);
                 // TODO: fix cubestore planning and re-enable.
                 if false && input_exec.output_partitioning().partition_count() == 1 {
                     // A single pass is enough for 1 partition.
                     return Ok(Arc::new(HashAggregateExec::try_new(
                         strategy,
+                        order,
                         AggregateMode::Full,
                         groups,
                         aggregates,
@@ -214,6 +216,7 @@ impl DefaultPhysicalPlanner {
                 let mut initial_aggr: Arc<dyn ExecutionPlan> =
                     Arc::new(HashAggregateExec::try_new(
                         strategy,
+                        order.clone(),
                         AggregateMode::Partial,
                         groups.clone(),
                         aggregates.clone(),
@@ -238,6 +241,7 @@ impl DefaultPhysicalPlanner {
                 // and the expressions corresponding to the respective aggregate
                 Ok(Arc::new(HashAggregateExec::try_new(
                     strategy,
+                    order,
                     AggregateMode::Final,
                     final_group
                         .iter()
@@ -957,19 +961,25 @@ pub fn evaluate_const(expr: Arc<dyn PhysicalExpr>) -> Result<Arc<dyn PhysicalExp
 pub fn compute_aggregation_strategy(
     input: &dyn ExecutionPlan,
     group_key: &[(Arc<dyn PhysicalExpr>, String)],
-) -> AggregateStrategy {
-    if !group_key.is_empty() && input_sorted_by_group_key(input, &group_key) {
-        AggregateStrategy::InplaceSorted
+) -> (AggregateStrategy, /*sort_order*/ Option<Vec<usize>>) {
+    let mut sort_order = Vec::new();
+    if !group_key.is_empty()
+        && input_sorted_by_group_key(input, &group_key, &mut sort_order)
+    {
+        (AggregateStrategy::InplaceSorted, Some(sort_order))
     } else {
-        AggregateStrategy::Hash
+        (AggregateStrategy::Hash, None)
     }
 }
 
 fn input_sorted_by_group_key(
     input: &dyn ExecutionPlan,
     group_key: &[(Arc<dyn PhysicalExpr>, String)],
+    sort_order: &mut Vec<usize>,
 ) -> bool {
     assert!(!group_key.is_empty());
+    sort_order.clear();
+
     let hints = input.output_hints();
     // We check the group key is a prefix of the sort key.
     let sort_key = hints.sort_order;
@@ -979,7 +989,8 @@ fn input_sorted_by_group_key(
     let sort_key = sort_key.unwrap();
     // Tracks which elements of sort key are used in the group key or have a single value.
     let mut sort_key_hit = vec![false; sort_key.len()];
-    for (g, _) in group_key {
+    let mut sort_to_group = vec![usize::MAX; sort_key.len()];
+    for (group_i, (g, _)) in group_key.iter().enumerate() {
         let col = g.as_any().downcast_ref::<Column>();
         if col.is_none() {
             return false;
@@ -989,11 +1000,15 @@ fn input_sorted_by_group_key(
             return false;
         }
         let input_col = input_col.unwrap();
-        let sort_key_pos = sort_key.iter().find_position(|i| **i == input_col);
-        if sort_key_pos.is_none() {
-            return false;
+        let sort_key_pos = match sort_key.iter().find_position(|i| **i == input_col) {
+            None => return false,
+            Some((p, _)) => p,
+        };
+        sort_key_hit[sort_key_pos] = true;
+        if sort_to_group[sort_key_pos] != usize::MAX {
+            return false; // Bail out to simplify code a bit. This should not happen in practice.
         }
-        sort_key_hit[sort_key_pos.unwrap().0] = true;
+        sort_to_group[sort_key_pos] = group_i;
     }
     for i in 0..sort_key.len() {
         if hints.single_value_columns.contains(&sort_key[i]) {
@@ -1003,12 +1018,21 @@ fn input_sorted_by_group_key(
 
     // At this point all elements of the group key mapped into some column of the sort key.
     // This checks the group key is mapped into a prefix of the sort key.
-    sort_key_hit
-        .iter()
-        .skip_while(|present| **present)
-        .skip_while(|present| !**present)
-        .next()
-        .is_none()
+    let pref_len = sort_key_hit.iter().take_while(|present| **present).count();
+    if sort_key_hit[pref_len..].iter().any(|present| *present) {
+        return false;
+    }
+
+    assert!(sort_order.is_empty()); // Cleared at the beginning of the function.
+
+    // Note that single-value columns might not have a mapping to the grouping key.
+    sort_order.extend(
+        sort_to_group
+            .iter()
+            .take(pref_len)
+            .filter(|i| **i != usize::MAX),
+    );
+    true
 }
 
 fn tuple_err<T, R>(value: (Result<T>, Result<R>)) -> Result<(T, R)> {

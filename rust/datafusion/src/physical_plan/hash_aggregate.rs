@@ -111,6 +111,7 @@ pub enum AggregateStrategy {
 #[derive(Debug)]
 pub struct HashAggregateExec {
     strategy: AggregateStrategy,
+    output_sort_order: Option<Vec<usize>>,
     /// Aggregation mode (full, partial)
     mode: AggregateMode,
     /// Grouping expressions
@@ -166,6 +167,7 @@ impl HashAggregateExec {
     /// Create a new hash aggregate execution plan
     pub fn try_new(
         strategy: AggregateStrategy,
+        output_sort_order: Option<Vec<usize>>,
         mode: AggregateMode,
         group_expr: Vec<(Arc<dyn PhysicalExpr>, String)>,
         aggr_expr: Vec<Arc<dyn AggregateExpr>>,
@@ -178,8 +180,24 @@ impl HashAggregateExec {
 
         let output_rows = SQLMetric::counter("outputRows");
 
+        match strategy {
+            AggregateStrategy::Hash => assert!(output_sort_order.is_none()),
+            AggregateStrategy::InplaceSorted => {
+                assert!(output_sort_order.is_some());
+                assert!(
+                    output_sort_order
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .all(|i| *i < group_expr.len()),
+                    "sort_order mentions value columns"
+                );
+            }
+        }
+
         Ok(HashAggregateExec {
             strategy,
+            output_sort_order,
             mode,
             group_expr,
             aggr_expr,
@@ -281,6 +299,7 @@ impl ExecutionPlan for HashAggregateExec {
         match children.len() {
             1 => Ok(Arc::new(HashAggregateExec::try_new(
                 self.strategy,
+                self.output_sort_order.clone(),
                 self.mode,
                 self.group_expr.clone(),
                 self.aggr_expr.clone(),
@@ -296,9 +315,7 @@ impl ExecutionPlan for HashAggregateExec {
     fn output_hints(&self) -> OptimizerHints {
         let sort_order = match self.strategy {
             AggregateStrategy::Hash => None,
-            AggregateStrategy::InplaceSorted => {
-                Some((0..self.group_expr.len()).collect_vec())
-            }
+            AggregateStrategy::InplaceSorted => self.output_sort_order.clone(),
         };
         OptimizerHints {
             sort_order,
@@ -1814,6 +1831,7 @@ mod tests {
         let input_schema = input.schema();
         let partial_aggregate = Arc::new(HashAggregateExec::try_new(
             AggregateStrategy::Hash,
+            None,
             AggregateMode::Partial,
             groups.clone(),
             aggregates.clone(),
@@ -1841,6 +1859,7 @@ mod tests {
 
         let merged_aggregate = Arc::new(HashAggregateExec::try_new(
             AggregateStrategy::Hash,
+            None,
             AggregateMode::Final,
             final_group
                 .iter()
