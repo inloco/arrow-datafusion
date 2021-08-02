@@ -41,7 +41,6 @@ use crate::physical_plan::{ExecutionPlan, OptimizerHints};
 
 use super::SendableRecordBatchStream;
 use crate::cube_ext;
-use crate::logical_plan::DFSchemaRef;
 use pin_project_lite::pin_project;
 use std::option::Option::None;
 
@@ -72,7 +71,7 @@ impl ExecutionPlan for MergeExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 
@@ -150,7 +149,7 @@ impl ExecutionPlan for MergeExec {
 
                 Ok(Box::pin(MergeStream {
                     input: receiver,
-                    schema: self.schema().to_schema_ref(),
+                    schema: self.schema(),
                 }))
             }
         }

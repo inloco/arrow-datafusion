@@ -31,7 +31,9 @@ use arrow::{datatypes::SchemaRef, error::Result as ArrowResult};
 
 use super::RecordBatchStream;
 use crate::error::{DataFusionError, Result};
-use crate::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning};
+use crate::physical_plan::{
+    DisplayFormatType, ExecutionPlan, OptimizerHints, Partitioning,
+};
 
 use super::SendableRecordBatchStream;
 use crate::physical_plan::common::spawn_execution;
@@ -65,7 +67,7 @@ impl ExecutionPlan for CoalescePartitionsExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 
@@ -123,7 +125,7 @@ impl ExecutionPlan for CoalescePartitionsExec {
 
                 Ok(Box::pin(MergeStream {
                     input: receiver,
-                    schema: self.schema().to_schema_ref(),
+                    schema: self.schema(),
                 }))
             }
         }

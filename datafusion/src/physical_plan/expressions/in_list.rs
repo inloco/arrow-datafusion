@@ -29,9 +29,10 @@ use arrow::array::{
 use arrow::{datatypes::DataType, record_batch::RecordBatch};
 
 use crate::error::Result;
-use crate::logical_plan::DFSchema;
+
 use crate::physical_plan::{ColumnarValue, PhysicalExpr};
 use crate::scalar::ScalarValue;
+use arrow::datatypes::Schema;
 
 /// InList
 #[derive(Debug)]
@@ -208,11 +209,11 @@ impl PhysicalExpr for InListExpr {
         self
     }
 
-    fn data_type(&self, _input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(DataType::Boolean)
     }
 
-    fn nullable(&self, input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, input_schema: &Schema) -> Result<bool> {
         self.expr.nullable(input_schema)
     }
 

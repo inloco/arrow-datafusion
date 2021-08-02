@@ -17,6 +17,8 @@
 
 use std::{any::Any, sync::Arc};
 
+use crate::arrow::compute::cast;
+use crate::arrow::datatypes::TimeUnit;
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{ColumnarValue, PhysicalExpr};
 use arrow::array::{self, *};
@@ -406,6 +408,7 @@ impl CaseExpr {
     ///     [ELSE result]
     /// END
     fn case_when_with_expr(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+        let return_type = self.when_then_expr[0].1.data_type(&batch.schema())?;
         let expr = self.expr.as_ref().unwrap();
         let base_value = expr.evaluate(batch)?;
         let base_value = base_value.into_array(batch.num_rows());
@@ -433,8 +436,7 @@ impl CaseExpr {
 
             let return_type = then_value.data_type();
             let else_value = current_value
-                .map(Ok)
-                .unwrap_or_else(|| build_null_array(return_type, batch.num_rows()))?;
+                .unwrap_or_else(|| new_null_array(return_type, batch.num_rows()));
             // TODO: add casts during planning, see `binary_cast`.
             let else_value = cast(&else_value, return_type)?;
             current_value = Some(if_then_else(
@@ -456,6 +458,8 @@ impl CaseExpr {
     ///      [ELSE result]
     /// END
     fn case_when_no_expr(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+        let return_type = self.when_then_expr[0].1.data_type(&batch.schema())?;
+
         // start with the else condition, or nulls
         let mut current_value: Option<ArrayRef> = if let Some(e) = &self.else_expr {
             Some(e.evaluate(batch)?.into_array(batch.num_rows()))
@@ -480,8 +484,7 @@ impl CaseExpr {
 
             let return_type = then_value.data_type();
             let else_value = current_value
-                .map(Ok)
-                .unwrap_or_else(|| build_null_array(return_type, batch.num_rows()))?;
+                .unwrap_or_else(|| new_null_array(return_type, batch.num_rows()));
             // TODO: add casts during planning, see `binary_cast`.
             let else_value = cast(&else_value, return_type)?;
             current_value = Some(if_then_else(
@@ -502,11 +505,11 @@ impl PhysicalExpr for CaseExpr {
         self
     }
 
-    fn data_type(&self, input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, input_schema: &Schema) -> Result<DataType> {
         self.when_then_expr[0].1.data_type(input_schema)
     }
 
-    fn nullable(&self, input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, input_schema: &Schema) -> Result<bool> {
         // this expression is nullable if any of the input expressions are nullable
         let then_nullable = self
             .when_then_expr
@@ -547,7 +550,7 @@ pub fn case(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logical_plan::ToDFSchema;
+
     use crate::{
         error::Result,
         logical_plan::Operator,
@@ -627,14 +630,14 @@ mod tests {
             col("a", &schema)?,
             Operator::Eq,
             lit(ScalarValue::Utf8(Some("foo".to_string()))),
-            &dfschema,
+            &schema,
         )?;
         let then1 = lit(ScalarValue::Int32(Some(123)));
         let when2 = binary(
             col("a", &schema)?,
             Operator::Eq,
             lit(ScalarValue::Utf8(Some("bar".to_string()))),
-            &dfschema,
+            &schema,
         )?;
         let then2 = lit(ScalarValue::Int32(Some(456)));
 
@@ -662,14 +665,14 @@ mod tests {
             col("a", &schema)?,
             Operator::Eq,
             lit(ScalarValue::Utf8(Some("foo".to_string()))),
-            &dfschema,
+            &schema,
         )?;
         let then1 = lit(ScalarValue::Int32(Some(123)));
         let when2 = binary(
             col("a", &schema)?,
             Operator::Eq,
             lit(ScalarValue::Utf8(Some("bar".to_string()))),
-            &dfschema,
+            &schema,
         )?;
         let then2 = lit(ScalarValue::Int32(Some(456)));
         let else_value = lit(ScalarValue::Int32(Some(999)));

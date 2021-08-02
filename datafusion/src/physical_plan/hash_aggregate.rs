@@ -28,10 +28,11 @@ use futures::{
     Future,
 };
 
+use crate::cube_match_scalar;
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{
     Accumulator, AggregateExpr, DisplayFormatType, Distribution, ExecutionPlan,
-    Partitioning, PhysicalExpr, SQLMetric,
+    OptimizerHints, Partitioning, PhysicalExpr, SQLMetric,
 };
 use crate::scalar::ScalarValue;
 
@@ -64,15 +65,8 @@ use ordered_float::OrderedFloat;
 use pin_project_lite::pin_project;
 
 use arrow::array::{
-    ArrayBuilder, BinaryBuilder, BooleanBuilder, Date32Builder, Date64Builder,
-    Float32Builder, Float64Builder, Int16Builder, Int32Builder, Int64Builder,
-    Int64Decimal0Builder, Int64Decimal10Builder, Int64Decimal1Builder,
-    Int64Decimal2Builder, Int64Decimal3Builder, Int64Decimal4Builder,
-    Int64Decimal5Builder, Int8Builder, IntervalDayTimeBuilder, IntervalYearMonthBuilder,
-    LargeBinaryBuilder, LargeStringBuilder, ListBuilder, StringBuilder,
-    TimestampMicrosecondArray, TimestampMicrosecondBuilder, TimestampMillisecondArray,
-    TimestampMillisecondBuilder, TimestampNanosecondArray, TimestampNanosecondBuilder,
-    TimestampSecondBuilder, UInt16Builder, UInt64Builder, UInt8Builder,
+    ArrayBuilder, BinaryBuilder, LargeStringArray, StringBuilder,
+    TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
 };
 use async_trait::async_trait;
 
@@ -82,11 +76,9 @@ use super::{
 };
 
 use crate::cube_ext;
-use crate::logical_plan::{DFSchema, DFSchemaRef};
+
 use crate::physical_plan::sorted_aggregate::SortedAggState;
-use crate::scalar::ScalarValue;
 use compute::cast;
-use itertools::Itertools;
 use smallvec::smallvec;
 use smallvec::SmallVec;
 use std::convert::TryFrom;
@@ -132,21 +124,21 @@ pub struct HashAggregateExec {
     /// Input plan, could be a partial aggregate or the input to the aggregate
     input: Arc<dyn ExecutionPlan>,
     /// Schema after the aggregate is applied
-    schema: DFSchemaRef,
+    schema: SchemaRef,
     /// Input schema before any aggregation is applied. For partial aggregate this will be the
     /// same as input.schema() but for the final aggregate it will be the same as the input
     /// to the partial aggregate
-    input_schema: DFSchemaRef,
+    input_schema: SchemaRef,
     /// Metric to track number of output rows
     output_rows: Arc<SQLMetric>,
 }
 
 pub(crate) fn create_schema(
-    input_schema: &DFSchema,
+    input_schema: &Schema,
     group_expr: &[(Arc<dyn PhysicalExpr>, String)],
     aggr_expr: &[Arc<dyn AggregateExpr>],
     mode: AggregateMode,
-) -> Result<DFSchema> {
+) -> Result<Schema> {
     let mut fields = Vec::with_capacity(group_expr.len() + aggr_expr.len());
     for (expr, name) in group_expr {
         fields.push(Field::new(
@@ -171,7 +163,7 @@ pub(crate) fn create_schema(
         }
     }
 
-    DFSchema::try_from(Schema::new(fields))
+    Ok(Schema::new(fields))
 }
 
 impl HashAggregateExec {
@@ -183,7 +175,7 @@ impl HashAggregateExec {
         group_expr: Vec<(Arc<dyn PhysicalExpr>, String)>,
         aggr_expr: Vec<Arc<dyn AggregateExpr>>,
         input: Arc<dyn ExecutionPlan>,
-        input_schema: DFSchemaRef,
+        input_schema: SchemaRef,
     ) -> Result<Self> {
         let schema = create_schema(&input.schema(), &group_expr, &aggr_expr, mode)?;
 
@@ -245,7 +237,7 @@ impl HashAggregateExec {
     }
 
     /// Get the input schema before any aggregates are applied
-    pub fn input_schema(&self) -> DFSchemaRef {
+    pub fn input_schema(&self) -> SchemaRef {
         self.input_schema.clone()
     }
 }
@@ -257,7 +249,7 @@ impl ExecutionPlan for HashAggregateExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
@@ -267,7 +259,9 @@ impl ExecutionPlan for HashAggregateExec {
 
     fn required_child_distribution(&self) -> Distribution {
         match &self.mode {
-            AggregateMode::Partial | AggregateMode::Full => Distribution::UnspecifiedDistribution,
+            AggregateMode::Partial | AggregateMode::Full => {
+                Distribution::UnspecifiedDistribution
+            }
             AggregateMode::FinalPartitioned => Distribution::HashPartitioned(
                 self.group_expr.iter().map(|x| x.0.clone()).collect(),
             ),
@@ -287,7 +281,7 @@ impl ExecutionPlan for HashAggregateExec {
         if self.group_expr.is_empty() {
             Ok(Box::pin(HashAggregateStream::new(
                 self.mode,
-                self.schema.to_schema_ref(),
+                self.schema.clone(),
                 self.aggr_expr.clone(),
                 input,
             )))
@@ -295,7 +289,7 @@ impl ExecutionPlan for HashAggregateExec {
             Ok(Box::pin(GroupedHashAggregateStream::new(
                 self.strategy,
                 self.mode,
-                self.schema.to_schema_ref(),
+                self.schema.clone(),
                 group_expr,
                 self.aggr_expr.clone(),
                 input,
@@ -484,6 +478,7 @@ pub(crate) fn group_aggregate_batch(
     let mut offset_so_far = 0;
     let batch_keys = batch_keys.finish();
     for key in batch_keys.iter() {
+        let key = key.unwrap();
         let (_, _, indices) = accumulators.get_mut(key).unwrap();
         batch_indices.append_slice(indices)?;
         offset_so_far += indices.len();
@@ -538,7 +533,9 @@ pub(crate) fn group_aggregate_batch(
                     )
                 })
                 .try_for_each(|(accumulator, values)| match mode {
-                    AggregateMode::Partial | AggregateMode::Full => accumulator.update_batch(&values),
+                    AggregateMode::Partial | AggregateMode::Full => {
+                        accumulator.update_batch(&values)
+                    }
                     AggregateMode::FinalPartitioned | AggregateMode::Final => {
                         // note: the aggregation here is over states, not values, thus the merge
                         accumulator.merge_batch(&values)
@@ -1059,7 +1056,9 @@ fn aggregate_batch(
 
             // 1.3
             match mode {
-                AggregateMode::Partial | AggregateMode::Full => accum.update_batch(values),
+                AggregateMode::Partial | AggregateMode::Full => {
+                    accum.update_batch(values)
+                }
                 AggregateMode::Final | AggregateMode::FinalPartitioned => {
                     accum.merge_batch(values)
                 }
@@ -1201,390 +1200,102 @@ pub fn create_accumulators(
         .collect::<Result<SmallVec<_>>>()
 }
 
+#[allow(unused_variables)]
 fn create_builder(s: &ScalarValue) -> Box<dyn ArrayBuilder> {
-    match s {
-        ScalarValue::Boolean(_) => Box::new(BooleanBuilder::new(0)),
-        ScalarValue::Float32(_) => Box::new(Float32Builder::new(0)),
-        ScalarValue::Float64(_) => Box::new(Float64Builder::new(0)),
-        ScalarValue::Int8(_) => Box::new(Int8Builder::new(0)),
-        ScalarValue::Int16(_) => Box::new(Int16Builder::new(0)),
-        ScalarValue::Int32(_) => Box::new(Int32Builder::new(0)),
-        ScalarValue::Int64(_) => Box::new(Int64Builder::new(0)),
-        ScalarValue::Int64Decimal(_, 0) => Box::new(Int64Decimal0Builder::new(0)),
-        ScalarValue::Int64Decimal(_, 1) => Box::new(Int64Decimal1Builder::new(0)),
-        ScalarValue::Int64Decimal(_, 2) => Box::new(Int64Decimal2Builder::new(0)),
-        ScalarValue::Int64Decimal(_, 3) => Box::new(Int64Decimal3Builder::new(0)),
-        ScalarValue::Int64Decimal(_, 4) => Box::new(Int64Decimal4Builder::new(0)),
-        ScalarValue::Int64Decimal(_, 5) => Box::new(Int64Decimal5Builder::new(0)),
-        ScalarValue::Int64Decimal(_, 10) => Box::new(Int64Decimal10Builder::new(0)),
-        ScalarValue::Int64Decimal(_, scale) => {
-            panic!("unhandled scale for decimal: {}", scale)
-        }
-        ScalarValue::UInt8(_) => Box::new(UInt8Builder::new(0)),
-        ScalarValue::UInt16(_) => Box::new(UInt16Builder::new(0)),
-        ScalarValue::UInt32(_) => Box::new(UInt32Builder::new(0)),
-        ScalarValue::UInt64(_) => Box::new(UInt64Builder::new(0)),
-        ScalarValue::Utf8(_) => Box::new(StringBuilder::new(0)),
-        ScalarValue::LargeUtf8(_) => Box::new(LargeStringBuilder::new(0)),
-        ScalarValue::Date32(_) => Box::new(Date32Builder::new(0)),
-        ScalarValue::Date64(_) => Box::new(Date64Builder::new(0)),
-        ScalarValue::TimestampMicrosecond(_) => {
-            Box::new(TimestampMicrosecondBuilder::new(0))
-        }
-        ScalarValue::TimestampNanosecond(_) => {
-            Box::new(TimestampNanosecondBuilder::new(0))
-        }
-        ScalarValue::TimestampMillisecond(_) => {
-            Box::new(TimestampMillisecondBuilder::new(0))
-        }
-        ScalarValue::TimestampSecond(_) => Box::new(TimestampSecondBuilder::new(0)),
-        ScalarValue::IntervalYearMonth(_) => Box::new(IntervalYearMonthBuilder::new(0)),
-        ScalarValue::IntervalDayTime(_) => Box::new(IntervalDayTimeBuilder::new(0)),
-        ScalarValue::List(_, dt) => match dt {
-            DataType::Int8 => Box::new(ListBuilder::new(Int8Builder::new(0))),
-            DataType::Int16 => Box::new(ListBuilder::new(Int16Builder::new(0))),
-            DataType::Int32 => Box::new(ListBuilder::new(Int32Builder::new(0))),
-            DataType::Int64 => Box::new(ListBuilder::new(Int64Builder::new(0))),
-            DataType::UInt8 => Box::new(ListBuilder::new(UInt8Builder::new(0))),
-            DataType::UInt16 => Box::new(ListBuilder::new(UInt16Builder::new(0))),
-            DataType::UInt32 => Box::new(ListBuilder::new(UInt32Builder::new(0))),
-            DataType::UInt64 => Box::new(ListBuilder::new(UInt64Builder::new(0))),
-            DataType::Utf8 => Box::new(ListBuilder::new(StringBuilder::new(0))),
-            x => panic!("unexpected list type {}", x),
-        },
-        ScalarValue::Binary(_) => Box::new(BinaryBuilder::new(0)),
-        ScalarValue::LargeBinary(_) => Box::new(LargeBinaryBuilder::new(0)),
+    macro_rules! create_list_builder {
+        ($v: expr, $inner_data_type: expr, ListBuilder $(, $rest: tt)*) => {{
+            panic!("nested lists not supported")
+        }};
+        ($v: expr, $builder: tt $(, $rest: tt)*) => {{
+            Box::new(ListBuilder::new($builder::new(0)))
+        }};
     }
+    macro_rules! create_builder {
+        ($v: expr, $inner_data_type: expr, ListBuilder $(, $rest: tt)*) => {{
+            let dummy = ScalarValue::try_from($inner_data_type)
+                .expect("unsupported inner list type");
+            cube_match_scalar!(dummy, create_list_builder)
+        }};
+        ($v: expr, $builder: tt $(, $rest: tt)*) => {{
+            Box::new($builder::new(0))
+        }};
+    }
+    cube_match_scalar!(s, create_builder)
 }
 
+#[allow(unused_variables)]
 fn append_value(b: &mut dyn ArrayBuilder, v: &ScalarValue) -> Result<()> {
     let b = b.as_any_mut();
-    match v {
-        ScalarValue::Boolean(Some(v)) => b
-            .downcast_mut::<BooleanBuilder>()
-            .unwrap()
-            .append_value(*v)?,
-        ScalarValue::Boolean(None) => {
-            b.downcast_mut::<BooleanBuilder>().unwrap().append_null()?
-        }
-        ScalarValue::Float32(Some(f)) => b
-            .downcast_mut::<Float32Builder>()
-            .unwrap()
-            .append_value(*f)?,
-        ScalarValue::Float32(None) => {
-            b.downcast_mut::<Float32Builder>().unwrap().append_null()?
-        }
-        ScalarValue::Float64(Some(f)) => b
-            .downcast_mut::<Float64Builder>()
-            .unwrap()
-            .append_value(*f)?,
-        ScalarValue::Float64(None) => {
-            b.downcast_mut::<Float64Builder>().unwrap().append_null()?
-        }
-        ScalarValue::Int8(Some(i)) => {
-            b.downcast_mut::<Int8Builder>().unwrap().append_value(*i)?
-        }
-        ScalarValue::Int8(None) => {
-            b.downcast_mut::<Int8Builder>().unwrap().append_null()?
-        }
-        ScalarValue::Int16(Some(i)) => {
-            b.downcast_mut::<Int16Builder>().unwrap().append_value(*i)?
-        }
-        ScalarValue::Int16(None) => {
-            b.downcast_mut::<Int16Builder>().unwrap().append_null()?
-        }
-        ScalarValue::Int32(Some(i)) => {
-            b.downcast_mut::<Int32Builder>().unwrap().append_value(*i)?
-        }
-        ScalarValue::Int32(None) => {
-            b.downcast_mut::<Int32Builder>().unwrap().append_null()?
-        }
-        ScalarValue::Int64(Some(i)) => {
-            b.downcast_mut::<Int64Builder>().unwrap().append_value(*i)?
-        }
-        ScalarValue::Int64(None) => {
-            b.downcast_mut::<Int64Builder>().unwrap().append_null()?
-        }
-        ScalarValue::UInt8(Some(i)) => {
-            b.downcast_mut::<UInt8Builder>().unwrap().append_value(*i)?
-        }
-        ScalarValue::UInt8(None) => {
-            b.downcast_mut::<UInt8Builder>().unwrap().append_null()?
-        }
-        ScalarValue::UInt16(Some(i)) => b
-            .downcast_mut::<UInt16Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::UInt16(None) => {
-            b.downcast_mut::<UInt16Builder>().unwrap().append_null()?
-        }
-        ScalarValue::UInt32(Some(i)) => b
-            .downcast_mut::<UInt32Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::UInt32(None) => {
-            b.downcast_mut::<UInt32Builder>().unwrap().append_null()?
-        }
-        ScalarValue::UInt64(Some(i)) => b
-            .downcast_mut::<UInt64Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::UInt64(None) => {
-            b.downcast_mut::<UInt64Builder>().unwrap().append_null()?
-        }
-        ScalarValue::Int64Decimal(None, 0) => b
-            .downcast_mut::<Int64Decimal0Builder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::Int64Decimal(Some(i), 0) => b
-            .downcast_mut::<Int64Decimal0Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::Int64Decimal(None, 1) => b
-            .downcast_mut::<Int64Decimal1Builder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::Int64Decimal(Some(i), 1) => b
-            .downcast_mut::<Int64Decimal1Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::Int64Decimal(None, 2) => b
-            .downcast_mut::<Int64Decimal2Builder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::Int64Decimal(Some(i), 2) => b
-            .downcast_mut::<Int64Decimal2Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::Int64Decimal(None, 3) => b
-            .downcast_mut::<Int64Decimal3Builder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::Int64Decimal(Some(i), 3) => b
-            .downcast_mut::<Int64Decimal3Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::Int64Decimal(None, 4) => b
-            .downcast_mut::<Int64Decimal4Builder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::Int64Decimal(Some(i), 4) => b
-            .downcast_mut::<Int64Decimal4Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::Int64Decimal(None, 5) => b
-            .downcast_mut::<Int64Decimal5Builder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::Int64Decimal(Some(i), 5) => b
-            .downcast_mut::<Int64Decimal5Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::Int64Decimal(None, 10) => b
-            .downcast_mut::<Int64Decimal10Builder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::Int64Decimal(Some(i), 10) => b
-            .downcast_mut::<Int64Decimal10Builder>()
-            .unwrap()
-            .append_value(*i)?,
-        ScalarValue::Int64Decimal(_, scale) => {
-            panic!("unhandled scale for decimal: {}", scale)
-        }
-        ScalarValue::Date32(None) => {
-            b.downcast_mut::<Date32Builder>().unwrap().append_null()?
-        }
-        ScalarValue::Date32(Some(v)) => b
-            .downcast_mut::<Date32Builder>()
-            .unwrap()
-            .append_value(*v)?,
-        ScalarValue::Date64(None) => {
-            b.downcast_mut::<Date64Builder>().unwrap().append_null()?
-        }
-        ScalarValue::Date64(Some(v)) => b
-            .downcast_mut::<Date64Builder>()
-            .unwrap()
-            .append_value(*v)?,
-        ScalarValue::TimestampMicrosecond(None) => b
-            .downcast_mut::<TimestampMicrosecondBuilder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::TimestampMicrosecond(Some(v)) => b
-            .downcast_mut::<TimestampMicrosecondBuilder>()
-            .unwrap()
-            .append_value(*v)?,
-        ScalarValue::TimestampNanosecond(None) => b
-            .downcast_mut::<TimestampNanosecondBuilder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::TimestampNanosecond(Some(v)) => b
-            .downcast_mut::<TimestampNanosecondBuilder>()
-            .unwrap()
-            .append_value(*v)?,
-        ScalarValue::TimestampSecond(None) => b
-            .downcast_mut::<TimestampSecondBuilder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::TimestampSecond(Some(v)) => b
-            .downcast_mut::<TimestampSecondBuilder>()
-            .unwrap()
-            .append_value(*v)?,
-        ScalarValue::TimestampMillisecond(None) => b
-            .downcast_mut::<TimestampMillisecondBuilder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::TimestampMillisecond(Some(v)) => b
-            .downcast_mut::<TimestampMillisecondBuilder>()
-            .unwrap()
-            .append_value(*v)?,
-        ScalarValue::IntervalYearMonth(None) => b
-            .downcast_mut::<IntervalYearMonthBuilder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::IntervalYearMonth(Some(v)) => b
-            .downcast_mut::<IntervalYearMonthBuilder>()
-            .unwrap()
-            .append_value(*v)?,
-        ScalarValue::IntervalDayTime(None) => b
-            .downcast_mut::<IntervalDayTimeBuilder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::IntervalDayTime(Some(v)) => b
-            .downcast_mut::<IntervalDayTimeBuilder>()
-            .unwrap()
-            .append_value(*v)?,
-        ScalarValue::Binary(None) => {
-            b.downcast_mut::<BinaryBuilder>().unwrap().append_null()?
-        }
-        ScalarValue::Binary(Some(v)) => b
-            .downcast_mut::<BinaryBuilder>()
-            .unwrap()
-            .append_value(&v)?,
-        ScalarValue::LargeBinary(None) => b
-            .downcast_mut::<LargeBinaryBuilder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::LargeBinary(Some(v)) => b
-            .downcast_mut::<LargeBinaryBuilder>()
-            .unwrap()
-            .append_value(&v)?,
-        ScalarValue::Utf8(None) => {
-            b.downcast_mut::<StringBuilder>().unwrap().append_null()?
-        }
-        ScalarValue::Utf8(Some(v)) => b
-            .downcast_mut::<StringBuilder>()
-            .unwrap()
-            .append_value(&v)?,
-        ScalarValue::LargeUtf8(None) => b
-            .downcast_mut::<LargeStringBuilder>()
-            .unwrap()
-            .append_null()?,
-        ScalarValue::LargeUtf8(Some(v)) => b
-            .downcast_mut::<LargeStringBuilder>()
-            .unwrap()
-            .append_value(&v)?,
-        ScalarValue::List(vs, DataType::Int8) => {
-            let builder = b.downcast_mut::<ListBuilder<Int8Builder>>().unwrap();
-            if let Some(vs) = vs {
-                for v in vs {
-                    append_value(builder.values(), v)?;
-                }
-                builder.append(true)?;
-            } else {
-                builder.append(false)?;
+    macro_rules! append_list_value {
+        ($list: expr, $dummy: expr, $inner_data_type: expr, ListBuilder $(, $rest: tt)*) => {{
+            panic!("nested lists not supported")
+        }};
+        ($list: expr, $dummy: expr, $builder: tt $(, $rest: tt)* ) => {{
+            let b = b
+                .downcast_mut::<ListBuilder<$builder>>()
+                .expect("invalid list builder");
+            let vs = match $list {
+                None => return Ok(b.append(false)?),
+                Some(box vs) => vs,
+            };
+            let values_builder = b.values();
+            for v in vs {
+                append_value(values_builder, v)?;
             }
-        }
-        ScalarValue::List(vs, DataType::Int16) => {
-            let builder = b.downcast_mut::<ListBuilder<Int16Builder>>().unwrap();
-            if let Some(vs) = vs {
-                for v in vs {
-                    append_value(builder.values(), v)?;
-                }
-                builder.append(true)?;
-            } else {
-                builder.append(false)?;
-            }
-        }
-        ScalarValue::List(vs, DataType::Int32) => {
-            let builder = b.downcast_mut::<ListBuilder<Int32Builder>>().unwrap();
-            if let Some(vs) = vs {
-                for v in vs {
-                    append_value(builder.values(), v)?;
-                }
-                builder.append(true)?;
-            } else {
-                builder.append(false)?;
-            }
-        }
-        ScalarValue::List(vs, DataType::Int64) => {
-            let builder = b.downcast_mut::<ListBuilder<Int64Builder>>().unwrap();
-            if let Some(vs) = vs {
-                for v in vs {
-                    append_value(builder.values(), v)?;
-                }
-                builder.append(true)?;
-            } else {
-                builder.append(false)?;
-            }
-        }
-        ScalarValue::List(vs, DataType::UInt8) => {
-            let builder = b.downcast_mut::<ListBuilder<UInt8Builder>>().unwrap();
-            if let Some(vs) = vs {
-                for v in vs {
-                    append_value(builder.values(), v)?;
-                }
-                builder.append(true)?;
-            } else {
-                builder.append(false)?;
-            }
-        }
-        ScalarValue::List(vs, DataType::UInt16) => {
-            let builder = b.downcast_mut::<ListBuilder<UInt16Builder>>().unwrap();
-            if let Some(vs) = vs {
-                for v in vs {
-                    append_value(builder.values(), v)?;
-                }
-                builder.append(true)?;
-            } else {
-                builder.append(false)?;
-            }
-        }
-        ScalarValue::List(vs, DataType::UInt32) => {
-            let builder = b.downcast_mut::<ListBuilder<UInt32Builder>>().unwrap();
-            if let Some(vs) = vs {
-                for v in vs {
-                    append_value(builder.values(), v)?;
-                }
-                builder.append(true)?;
-            } else {
-                builder.append(false)?;
-            }
-        }
-        ScalarValue::List(vs, DataType::UInt64) => {
-            let builder = b.downcast_mut::<ListBuilder<UInt64Builder>>().unwrap();
-            if let Some(vs) = vs {
-                for v in vs {
-                    append_value(builder.values(), v)?;
-                }
-                builder.append(true)?;
-            } else {
-                builder.append(false)?;
-            }
-        }
-        ScalarValue::List(vs, DataType::Utf8) => {
-            let builder = b.downcast_mut::<ListBuilder<StringBuilder>>().unwrap();
-            if let Some(vs) = vs {
-                for v in vs {
-                    append_value(builder.values(), v)?;
-                }
-                builder.append(true)?;
-            } else {
-                builder.append(false)?;
-            }
-        }
-        ScalarValue::List(_, dt) => panic!("unexpected list type {}", dt),
+            Ok(b.append(true)?)
+        }};
     }
-    Ok(())
+    macro_rules! append_value {
+        ($v: expr, $inner_data_type: expr, ListBuilder $(, $rest: tt)* ) => {{
+            let dummy = ScalarValue::try_from($inner_data_type)
+                .expect("unsupported inner list type");
+            cube_match_scalar!(dummy, append_list_value, $v)
+        }};
+        ($v: expr, StringBuilder $(, $rest: tt)*) => {{
+            let b = b
+                .downcast_mut::<StringBuilder>()
+                .expect("invalid string builder");
+            match $v {
+                None => Ok(b.append_null()?),
+                Some(v) => Ok(b.append_value(v)?),
+            }
+        }};
+        ($v: expr, LargeStringBuilder $(, $rest: tt)*) => {{
+            let b = b
+                .downcast_mut::<LargeStringBuilder>()
+                .expect("invalid large string builder");
+            match $v {
+                None => Ok(b.append_null()?),
+                Some(v) => Ok(b.append_value(v)?),
+            }
+        }};
+        ($v: expr, LargeBinaryBuilder $(, $rest: tt)*) => {{
+            let b = b
+                .downcast_mut::<LargeBinaryBuilder>()
+                .expect("invalid large binary builder");
+            match $v {
+                None => Ok(b.append_null()?),
+                Some(v) => Ok(b.append_value(v)?),
+            }
+        }};
+        ($v: expr, BinaryBuilder $(, $rest: tt)*) => {{
+            let b = b
+                .downcast_mut::<BinaryBuilder>()
+                .expect("invalid binary builder");
+            match $v {
+                None => Ok(b.append_null()?),
+                Some(v) => Ok(b.append_value(v)?),
+            }
+        }};
+        ($v: expr, $builder: tt $(, $rest: tt)*) => {{
+            let b = b.downcast_mut::<$builder>().expect(stringify!($builder));
+            match $v {
+                None => Ok(b.append_null()?),
+                Some(v) => Ok(b.append_value(*v)?),
+            }
+        }};
+    }
+    cube_match_scalar!(v, append_value)
 }
 
 /// adds aggregation results into columns, creating the required builders when necessary.
@@ -1610,7 +1321,7 @@ fn finalize_aggregation_into(
                 }
             }
         }
-        AggregateMode::Final | AggregateMode::Full => {
+        AggregateMode::Final | AggregateMode::FinalPartitioned | AggregateMode::Full => {
             for i in 0..accumulators.len() {
                 // merge the state to the final value
                 let v = accumulators[i].evaluate()?;
@@ -1723,7 +1434,7 @@ fn create_group_by_value(col: &ArrayRef, row: usize) -> Result<GroupByScalar> {
         }
         DataType::LargeUtf8 => {
             let array = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
-            Ok(GroupByScalar::LargeUtf8(Box::new(array.value(row).into())))
+            Ok(GroupByScalar::LargeUtf8(array.value(row).into()))
         }
         DataType::Boolean => {
             let array = col.as_any().downcast_ref::<BooleanArray>().unwrap();
@@ -1824,8 +1535,9 @@ async fn compute_grouped_sorted_aggregate(
     mut input: SendableRecordBatchStream,
 ) -> ArrowResult<RecordBatch> {
     // the expressions to evaluate the batch, one vec of expressions per aggregation
-    let aggregate_expressions = aggregate_expressions(&aggr_expr, &mode)
-        .map_err(DataFusionError::into_arrow_external_error)?;
+    let aggregate_expressions =
+        aggregate_expressions(&aggr_expr, &mode, group_expr.len())
+            .map_err(DataFusionError::into_arrow_external_error)?;
 
     // iterate over all input batches and update the accumulators
     let mut state = SortedAggState::new();
@@ -1981,8 +1693,8 @@ mod tests {
         fn as_any(&self) -> &dyn Any {
             self
         }
-        fn schema(&self) -> DFSchemaRef {
-            some_data().0.to_dfschema_ref().unwrap()
+        fn schema(&self) -> SchemaRef {
+            some_data().0
         }
 
         fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {

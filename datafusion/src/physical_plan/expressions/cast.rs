@@ -21,13 +21,13 @@ use std::sync::Arc;
 
 use super::ColumnarValue;
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::DFSchema;
+
 use crate::physical_plan::PhysicalExpr;
 use crate::scalar::ScalarValue;
 use arrow::compute;
 use arrow::compute::kernels;
 use arrow::compute::CastOptions;
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Schema};
 use arrow::record_batch::RecordBatch;
 use compute::can_cast_types;
 
@@ -82,11 +82,11 @@ impl PhysicalExpr for CastExpr {
         self
     }
 
-    fn data_type(&self, _input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(self.cast_type.clone())
     }
 
-    fn nullable(&self, input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, input_schema: &Schema) -> Result<bool> {
         self.expr.nullable(input_schema)
     }
 
@@ -122,7 +122,7 @@ pub fn cast_column(
 /// Note that such casts may lose type information
 pub fn cast_with_options(
     expr: Arc<dyn PhysicalExpr>,
-    input_schema: &DFSchema,
+    input_schema: &Schema,
     cast_type: DataType,
     cast_options: CastOptions,
 ) -> Result<Arc<dyn PhysicalExpr>> {
@@ -145,7 +145,7 @@ pub fn cast_with_options(
 /// Note that such casts may lose type information
 pub fn cast(
     expr: Arc<dyn PhysicalExpr>,
-    input_schema: &DFSchema,
+    input_schema: &Schema,
     cast_type: DataType,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     cast_with_options(
@@ -160,7 +160,7 @@ pub fn cast(
 mod tests {
     use super::*;
     use crate::error::Result;
-    use crate::logical_plan::ToDFSchema;
+
     use crate::physical_plan::expressions::col;
     use arrow::array::{StringArray, Time64NanosecondArray};
     use arrow::{
@@ -177,7 +177,6 @@ mod tests {
     macro_rules! generic_test_cast {
         ($A_ARRAY:ident, $A_TYPE:expr, $A_VEC:expr, $TYPEARRAY:ident, $TYPE:expr, $VEC:expr, $CAST_OPTIONS:expr) => {{
             let schema = Schema::new(vec![Field::new("a", $A_TYPE, false)]);
-            let dfschema = schema.clone().to_dfschema().unwrap();
             let a = $A_ARRAY::from($A_VEC);
             let batch =
                 RecordBatch::try_new(Arc::new(schema.clone()), vec![Arc::new(a)])?;
@@ -193,7 +192,7 @@ mod tests {
             );
 
             // verify that the expression's type is correct
-            assert_eq!(expression.data_type(&dfschema)?, $TYPE);
+            assert_eq!(expression.data_type(&schema)?, $TYPE);
 
             // compute
             let result = expression.evaluate(&batch)?.into_array(batch.num_rows());
@@ -278,7 +277,6 @@ mod tests {
     fn invalid_cast() {
         // Ensure a useful error happens at plan time if invalid casts are used
         let schema = Schema::new(vec![Field::new("a", DataType::Int32, false)]);
-        let dfschema = schema.clone().to_dfschema().unwrap();
 
         let result = cast(col("a", &schema).unwrap(), &schema, DataType::LargeBinary);
         result.expect_err("expected Invalid CAST");
@@ -288,7 +286,6 @@ mod tests {
     fn invalid_cast_with_options_error() -> Result<()> {
         // Ensure a useful error happens at plan time if invalid casts are used
         let schema = Schema::new(vec![Field::new("a", DataType::Utf8, false)]);
-        let dfschema = schema.clone().to_dfschema().unwrap();
 
         let a = StringArray::from(vec!["9.1"]);
         let batch = RecordBatch::try_new(Arc::new(schema.clone()), vec![Arc::new(a)])?;

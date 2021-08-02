@@ -34,7 +34,6 @@ use arrow::record_batch::RecordBatch;
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
 
-use crate::logical_plan::DFSchemaRef;
 use async_trait::async_trait;
 
 /// Skips first n rows of the input plan
@@ -70,7 +69,7 @@ impl ExecutionPlan for SkipExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 

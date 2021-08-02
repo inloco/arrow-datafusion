@@ -27,10 +27,10 @@ use arrow::{
         TimestampSecondType, UInt16Type, UInt32Type, UInt64Type, UInt8Type,
     },
 };
+use serde_derive::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::str::FromStr;
 use std::{convert::TryFrom, fmt, iter::repeat, sync::Arc};
-use serde_derive::{Deserialize, Serialize};
 
 /// Represents a dynamically typed, nullable single value.
 /// This is the single-valued counter-part of arrow’s `Array`.
@@ -293,7 +293,9 @@ impl ScalarValue {
             ScalarValue::Int16(Some(v)) => ScalarValue::Int16(Some(-v)),
             ScalarValue::Int32(Some(v)) => ScalarValue::Int32(Some(-v)),
             ScalarValue::Int64(Some(v)) => ScalarValue::Int64(Some(-v)),
-            ScalarValue::Int64Decimal(Some(v), s) => ScalarValue::Int64Decimal(Some(-v), *s),
+            ScalarValue::Int64Decimal(Some(v), s) => {
+                ScalarValue::Int64Decimal(Some(-v), *s)
+            }
             _ => panic!("Cannot run arithmetic negate on scalar value: {:?}", self),
         }
     }
@@ -1034,7 +1036,9 @@ impl TryFrom<&DataType> for ScalarValue {
             DataType::Int16 => ScalarValue::Int16(None),
             DataType::Int32 => ScalarValue::Int32(None),
             DataType::Int64 => ScalarValue::Int64(None),
-            DataType::Int64Decimal(scale) => ScalarValue::Int64Decimal(None, *scale as u8),
+            DataType::Int64Decimal(scale) => {
+                ScalarValue::Int64Decimal(None, *scale as u8)
+            }
             DataType::UInt8 => ScalarValue::UInt8(None),
             DataType::UInt16 => ScalarValue::UInt16(None),
             DataType::UInt32 => ScalarValue::UInt32(None),

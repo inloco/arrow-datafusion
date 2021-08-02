@@ -39,11 +39,11 @@ use arrow::compute::kernels::comparison::{
     eq_utf8_scalar, gt_eq_utf8_scalar, gt_utf8_scalar, lt_eq_utf8_scalar, lt_utf8_scalar,
     neq_utf8_scalar,
 };
-use arrow::datatypes::{DataType, TimeUnit};
+use arrow::datatypes::{DataType, Schema, TimeUnit};
 use arrow::record_batch::RecordBatch;
 
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::{DFSchema, Operator};
+use crate::logical_plan::Operator;
 use crate::physical_plan::expressions::try_cast;
 use crate::physical_plan::{ColumnarValue, PhysicalExpr};
 use crate::scalar::ScalarValue;
@@ -132,6 +132,11 @@ macro_rules! compute_boolean_op_scalar {
     ($LEFT:expr, $RIGHT:expr, divide, $DT:ident) => {{
         return Err(DataFusionError::Internal(format!(
             "division of booleans is not supported"
+        )));
+    }};
+    ($LEFT:expr, $RIGHT:expr, modulus, $DT:ident) => {{
+        return Err(DataFusionError::Internal(format!(
+            "modulus operation on booleans is not supported"
         )));
     }};
     ($LEFT:expr, $RIGHT:expr, $OP:ident, $DT:ident) => {{
@@ -504,9 +509,11 @@ fn common_binary_type(
         }
         // for math expressions, the final value of the coercion is also the return type
         // because coercion favours higher information types
-        Operator::Divide | Operator::Multiply | Operator::Modulus => multi_div_conversion(lhs_type, rhs_type)
-            .or_else(|| numerical_coercion(lhs_type, rhs_type))
-            .or_else(|| string_implicit_cast(lhs_type, rhs_type)),
+        Operator::Divide | Operator::Multiply | Operator::Modulus => {
+            multi_div_conversion(lhs_type, rhs_type)
+                .or_else(|| numerical_coercion(lhs_type, rhs_type))
+                .or_else(|| string_implicit_cast(lhs_type, rhs_type))
+        }
         Operator::Plus | Operator::Minus => numerical_coercion(lhs_type, rhs_type)
             .or_else(|| string_implicit_cast(lhs_type, rhs_type)),
     };
@@ -563,7 +570,7 @@ impl PhysicalExpr for BinaryExpr {
         self
     }
 
-    fn data_type(&self, input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, input_schema: &Schema) -> Result<DataType> {
         binary_operator_data_type(
             &self.left.data_type(input_schema)?,
             &self.op,
@@ -571,7 +578,7 @@ impl PhysicalExpr for BinaryExpr {
         )
     }
 
-    fn nullable(&self, input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, input_schema: &Schema) -> Result<bool> {
         Ok(self.left.nullable(input_schema)? || self.right.nullable(input_schema)?)
     }
 
@@ -699,7 +706,7 @@ fn binary_cast(
     lhs: Arc<dyn PhysicalExpr>,
     op: &Operator,
     rhs: Arc<dyn PhysicalExpr>,
-    input_schema: &DFSchema,
+    input_schema: &Schema,
 ) -> Result<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> {
     let lhs_type = &lhs.data_type(input_schema)?;
     let rhs_type = &rhs.data_type(input_schema)?;
@@ -719,7 +726,7 @@ pub fn binary(
     lhs: Arc<dyn PhysicalExpr>,
     op: Operator,
     rhs: Arc<dyn PhysicalExpr>,
-    input_schema: &DFSchema,
+    input_schema: &Schema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     let (l, r) = binary_cast(lhs, &op, rhs, input_schema)?;
     Ok(Arc::new(BinaryExpr::new(l, op, r)))
@@ -732,7 +739,7 @@ mod tests {
 
     use super::*;
     use crate::error::Result;
-    use crate::logical_plan::ToDFSchema;
+
     use crate::physical_plan::expressions::col;
 
     // Create a binary expression without coercion. Used here when we do not want to coerce the expressions
@@ -822,7 +829,6 @@ mod tests {
                 Field::new("a", $A_TYPE, false),
                 Field::new("b", $B_TYPE, false),
             ]);
-            let dfschema = schema.clone().to_dfschema().unwrap();
             let a = $A_ARRAY::from($A_VEC);
             let b = $B_ARRAY::from($B_VEC);
 
@@ -835,7 +841,7 @@ mod tests {
             )?;
 
             // verify that the expression's type is correct
-            assert_eq!(expression.data_type(&dfschema)?, $C_TYPE);
+            assert_eq!(expression.data_type(&schema)?, $C_TYPE);
 
             // compute
             let result = expression.evaluate(&batch)?.into_array(batch.num_rows());
@@ -998,7 +1004,6 @@ mod tests {
             Field::new("dict", dict_type, true),
             Field::new("str", string_type, true),
         ]));
-        let dfschema = schema.clone().to_dfschema().unwrap();
 
         let batch = RecordBatch::try_new(
             schema.clone(),

@@ -31,6 +31,8 @@ use crate::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use crate::scalar::ScalarValue;
 use itertools::Itertools;
 use smallvec::SmallVec;
+use std::collections::hash_map::RandomState;
+use std::collections::HashSet;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct DistinctScalarValues(Vec<GroupByScalar>);
@@ -140,7 +142,7 @@ impl Accumulator for DistinctCountAccumulator {
     fn update(&mut self, values: &[ScalarValue]) -> Result<()> {
         // If a row has a NULL, it is not included in the final count.
         if !values.iter().any(|v| v.is_null()) {
-            self.values.push(DistinctScalarValues(
+            self.values.insert(DistinctScalarValues(
                 values
                     .iter()
                     .map(GroupByScalar::try_from)
@@ -185,7 +187,7 @@ impl Accumulator for DistinctCountAccumulator {
                 let data_type = Box::new(state_data_type.clone());
                 ScalarValue::List(Some(values), data_type)
             })
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<_>>();
 
         let mut cols_vec = cols_out
             .iter_mut()

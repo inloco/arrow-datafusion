@@ -18,11 +18,13 @@
 //! Functionality used both on logical and physical plans
 
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::{DFField, DFSchema};
+
 use std::collections::HashSet;
 
 use crate::logical_plan::JoinType;
 use crate::physical_plan::expressions::Column;
+use arrow::datatypes::Field;
+use arrow::datatypes::Schema;
 
 /// The on clause of the join, as vector of (left, right) columns.
 pub type JoinOn = Vec<(Column, Column)>;
@@ -70,20 +72,11 @@ fn check_join_set_is_valid(
     };
 
     let remaining = right
-        .fields()
-        .iter()
-        .map(|f| f.qualified_name())
-        .collect::<HashSet<_>>()
         .difference(on_right)
         .cloned()
         .collect::<HashSet<Column>>();
 
-    let left_fields = left
-        .fields()
-        .iter()
-        .map(|f| f.qualified_name())
-        .collect::<HashSet<_>>();
-    let collisions = left_fields.intersection(&remaining).collect::<HashSet<_>>();
+    let collisions = left.intersection(&remaining).collect::<HashSet<_>>();
 
     if !collisions.is_empty() {
         return Err(DataFusionError::Plan(format!(
@@ -107,13 +100,12 @@ pub fn build_join_schema(left: &Schema, right: &Schema, join_type: &JoinType) ->
         }
         JoinType::Semi | JoinType::Anti => left.fields().clone(),
     };
-    DFSchema::new(fields)
+    Schema::new(fields)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::datatypes::DataType;
 
     fn check(left: &[Column], right: &[Column], on: &[(Column, Column)]) -> Result<()> {
         let left = left

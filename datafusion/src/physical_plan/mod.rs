@@ -122,6 +122,7 @@ impl SQLMetric {
 
 /// Physical planner interface
 pub use self::planner::PhysicalPlanner;
+use smallvec::SmallVec;
 
 /// Various hints for planning and optimizations.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -152,7 +153,7 @@ pub trait ExecutionPlan: Debug + Send + Sync {
     /// downcast to a specific implementation.
     fn as_any(&self) -> &dyn Any;
     /// Get the schema for this execution plan
-    fn schema(&self) -> DFSchemaRef;
+    fn schema(&self) -> SchemaRef;
     /// Specifies the output partitioning scheme of this plan
     fn output_partitioning(&self) -> Partitioning;
     /// Specifies the data distribution requirements of all the children for this operator
@@ -198,7 +199,8 @@ pub trait ExecutionPlan: Debug + Send + Sync {
 /// [`ExecutionPlan`] which can be displayed in various easier to
 /// understand ways.
 ///
-/// ```
+///
+/// ```no_run as CubeStore disables coalesce batches.
 /// use datafusion::prelude::*;
 /// use datafusion::physical_plan::displayable;
 ///
@@ -404,7 +406,7 @@ pub enum Distribution {
 }
 
 /// Represents the result from an expression
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ColumnarValue {
     /// Array of values
     Array(ArrayRef),
@@ -437,9 +439,9 @@ pub trait PhysicalExpr: Send + Sync + Display + Debug {
     /// downcast to a specific implementation.
     fn as_any(&self) -> &dyn Any;
     /// Get the data type of this expression, given the schema of the input
-    fn data_type(&self, input_schema: &DFSchema) -> Result<DataType>;
+    fn data_type(&self, input_schema: &Schema) -> Result<DataType>;
     /// Determine whether this expression is nullable, given the schema of the input
-    fn nullable(&self, input_schema: &DFSchema) -> Result<bool>;
+    fn nullable(&self, input_schema: &Schema) -> Result<bool>;
     /// Evaluate an expression against a RecordBatch
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue>;
 }
@@ -619,7 +621,6 @@ pub trait Accumulator: Send + Sync + Debug {
 }
 
 pub mod aggregates;
-pub mod alias;
 pub mod array_expressions;
 pub mod coalesce_batches;
 pub mod coalesce_partitions;
@@ -655,8 +656,8 @@ pub mod regex_expressions;
 pub mod repartition;
 pub mod skip;
 pub mod sort;
-mod sorted_aggregate;
 pub mod sort_preserving_merge;
+mod sorted_aggregate;
 pub mod source;
 pub mod string_expressions;
 pub mod type_coercion;

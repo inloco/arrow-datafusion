@@ -21,13 +21,14 @@ use crate::cube_ext::stream::StreamWithSchema;
 use crate::error::{DataFusionError, Result};
 use crate::execution::context::ExecutionContextState;
 use crate::logical_plan::{
-    DFSchemaRef, Expr, LogicalPlan, PlanVisitor, UserDefinedLogicalNode,
+    DFSchemaRef, Expr, JoinType, LogicalPlan, PlanVisitor, UserDefinedLogicalNode,
 };
 use crate::physical_plan::coalesce_batches::concat_batches;
-use crate::physical_plan::hash_utils::{build_join_schema, JoinType};
-use crate::physical_plan::planner::{DefaultPhysicalPlanner, ExtensionPlanner};
+use crate::physical_plan::hash_utils::build_join_schema;
+use crate::physical_plan::planner::ExtensionPlanner;
 use crate::physical_plan::{
-    collect, ExecutionPlan, Partitioning, PhysicalExpr, SendableRecordBatchStream,
+    collect, ExecutionPlan, Partitioning, PhysicalExpr, PhysicalPlanner,
+    SendableRecordBatchStream,
 };
 use arrow::array::{BooleanArray, UInt64Array};
 use arrow::compute::{filter_record_batch, take};
@@ -41,33 +42,35 @@ use std::fmt::Formatter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Cross-join that supports complex conditions.
+/// Cross-join that supports complex conditions and eagerly evaluates the left side of the plan.
 #[derive(Clone, Debug)]
-pub struct CrossJoin {
+pub struct SkewedLeftCrossJoin {
     pub schema: DFSchemaRef,
     pub left: LogicalPlan,
     pub right: LogicalPlan,
     pub on: Expr,
 }
 
-impl CrossJoin {
+impl SkewedLeftCrossJoin {
     pub fn from_template_typed(
         &self,
         exprs: &[Expr],
         inputs: &[LogicalPlan],
-    ) -> CrossJoin {
+    ) -> SkewedLeftCrossJoin {
         assert_eq!(exprs.len(), 1);
         assert_eq!(inputs.len(), 2);
-        CrossJoin {
+        // We update schema to remove columns removed by projection pushdown.
+        let schema = Arc::new(inputs[0].schema().join(inputs[1].schema()).unwrap());
+        SkewedLeftCrossJoin {
             left: inputs[0].clone(),
             right: inputs[1].clone(),
             on: exprs[0].clone(),
-            schema: self.schema.clone(),
+            schema,
         }
     }
 }
 
-impl UserDefinedLogicalNode for CrossJoin {
+impl UserDefinedLogicalNode for SkewedLeftCrossJoin {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -85,7 +88,7 @@ impl UserDefinedLogicalNode for CrossJoin {
     }
 
     fn fmt_for_explain(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "CrossJoin: {:?}", self.on)
+        write!(f, "SkewedLeftCrossJoin: {:?}", self.on)
     }
 
     fn from_template(
@@ -124,7 +127,8 @@ pub fn contains_table_scan(p: &LogicalPlan) -> bool {
 }
 
 pub fn plan_cross_join(
-    node: &CrossJoin,
+    planner: &dyn PhysicalPlanner,
+    node: &SkewedLeftCrossJoin,
     inputs: &[Arc<dyn ExecutionPlan>],
     ctx_state: &ExecutionContextState,
 ) -> Result<CrossJoinExec> {
@@ -132,10 +136,8 @@ pub fn plan_cross_join(
     let left = &inputs[0];
     let right = &inputs[1];
 
-    let schema =
-        build_join_schema(&left.schema(), &right.schema(), &[], &JoinType::Left)?;
-    let on = DefaultPhysicalPlanner::default()
-        .create_physical_expr(&node.on, &schema, ctx_state)?;
+    let schema = build_join_schema(&left.schema(), &right.schema(), &JoinType::Left);
+    let on = planner.create_physical_expr(&node.on, node.schema(), &schema, ctx_state)?;
 
     Ok(CrossJoinExec {
         left: left.clone(),
@@ -150,16 +152,20 @@ pub struct CrossJoinPlanner;
 impl ExtensionPlanner for CrossJoinPlanner {
     fn plan_extension(
         &self,
+        planner: &dyn PhysicalPlanner,
         node: &dyn UserDefinedLogicalNode,
+        _logical_inputs: &[&LogicalPlan],
         inputs: &[Arc<dyn ExecutionPlan>],
         ctx_state: &ExecutionContextState,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let node = match node.as_any().downcast_ref::<CrossJoin>() {
+        let node = match node.as_any().downcast_ref::<SkewedLeftCrossJoin>() {
             None => return Ok(None),
             Some(j) => j,
         };
 
-        Ok(Some(Arc::new(plan_cross_join(node, inputs, ctx_state)?)))
+        Ok(Some(Arc::new(plan_cross_join(
+            planner, node, inputs, ctx_state,
+        )?)))
     }
 }
 
@@ -172,7 +178,7 @@ pub struct CrossJoinExec {
     pub left_result: Mutex<Option<std::result::Result<Arc<RecordBatch>, ()>>>,
     pub right: Arc<dyn ExecutionPlan>,
     pub on: Arc<dyn PhysicalExpr>,
-    pub schema: DFSchemaRef,
+    pub schema: SchemaRef,
 }
 
 impl CrossJoinExec {
@@ -193,11 +199,7 @@ impl CrossJoinExec {
     async fn do_compute_left(&self) -> Result<RecordBatch> {
         let batches = collect(self.left.clone()).await?;
         let num_rows = batches.iter().map(|b| b.num_rows()).sum();
-        Ok(concat_batches(
-            &self.left.schema().to_schema_ref(),
-            &batches,
-            num_rows,
-        )?)
+        Ok(concat_batches(&self.left.schema(), &batches, num_rows)?)
     }
 
     pub async fn compute_left(&self) -> Result<Arc<RecordBatch>> {
@@ -224,7 +226,7 @@ impl ExecutionPlan for CrossJoinExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
@@ -246,7 +248,7 @@ impl ExecutionPlan for CrossJoinExec {
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         let left = self.compute_left().await?;
         let right = self.right.execute(partition).await?;
-        let schema = self.schema.to_schema_ref();
+        let schema = self.schema.clone();
         let on = self.on.clone();
         Ok(Box::pin(StreamWithSchema::wrap(
             schema.clone(),

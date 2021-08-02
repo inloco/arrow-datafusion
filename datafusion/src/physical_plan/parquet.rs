@@ -24,6 +24,7 @@ use std::task::{Context, Poll};
 use std::{any::Any, convert::TryInto};
 
 use crate::{
+    cube_ext,
     error::{DataFusionError, Result},
     logical_plan::{Column, Expr},
     physical_optimizer::pruning::{PruningPredicate, PruningStatistics},
@@ -51,10 +52,7 @@ use parquet::file::{
 use fmt::Debug;
 use parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 
-use tokio::{
-    sync::mpsc::{channel, Receiver, Sender},
-    task,
-};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::datasource::datasource::{ColumnStatistics, Statistics};
@@ -603,20 +601,7 @@ macro_rules! get_min_max_values {
             .flat_map(|meta| {
                 meta.column(column_index).statistics()
             })
-            .map(|stats| {
-                match data_type {
-                    DataType::Int64Decimal(s) => {
-                        if !stats.has_min_max_set() {
-                            return None;
-                        }
-                        match stats {
-                            ParquetStatistics::Int64(s) => Some(ScalarValue::Int64Decimal(Some(*s.$fund()), s)),
-                            _ => return None,
-                        }
-                    }
-                }
-                get_statistic!(stats, $func, $bytes_func)
-            })
+            .map(|stats| get_statistic!(stats, $func, $bytes_func))
             .map(|maybe_scalar| {
                 // column either did't have statistics at all or didn't have min/max values
                 maybe_scalar.unwrap_or_else(|| null_scalar.clone())
@@ -766,12 +751,12 @@ mod tests {
     use super::*;
     use arrow::datatypes::{DataType, Field};
     use futures::StreamExt;
+
     use parquet::{
         basic::Type as PhysicalType,
         file::{metadata::RowGroupMetaData, statistics::Statistics as ParquetStatistics},
         schema::types::SchemaDescPtr,
     };
-    use parquet::data_type::Int96;
 
     #[test]
     fn test_split_files() {
@@ -979,6 +964,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "CubeStore support bool type"]
     fn row_group_predicate_builder_unsupported_type() -> Result<()> {
         use crate::logical_plan::{col, lit};
         // test row group predicate with unsupported statistics type (boolean)

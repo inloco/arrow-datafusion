@@ -36,7 +36,7 @@ use crate::{
 
 use super::dfschema::ToDFSchema;
 use super::{exprlist_to_fields, Expr, JoinConstraint, JoinType, LogicalPlan, PlanType};
-use crate::cube_ext::join::CrossJoin;
+use crate::cube_ext::join::SkewedLeftCrossJoin;
 use crate::logical_plan::{
     columnize_expr, normalize_col, normalize_cols, Column, DFField, DFSchema,
     DFSchemaRef, Partitioning,
@@ -110,7 +110,7 @@ impl LogicalPlanBuilder {
         projection: Option<Vec<usize>>,
     ) -> Result<Self> {
         let provider = Arc::new(MemTable::try_new(schema, partitions)?);
-        Self::scan(UNNAMED_TABLE, provider, projection, None)
+        Self::scan(UNNAMED_TABLE, provider, projection)
     }
 
     /// Scan a CSV data source
@@ -131,7 +131,7 @@ impl LogicalPlanBuilder {
         table_name: impl Into<String>,
     ) -> Result<Self> {
         let provider = Arc::new(CsvFile::try_new(path, options)?);
-        Self::scan(table_name, provider, projection, None)
+        Self::scan(table_name, provider, projection)
     }
 
     /// Scan a Parquet data source
@@ -152,7 +152,7 @@ impl LogicalPlanBuilder {
         table_name: impl Into<String>,
     ) -> Result<Self> {
         let provider = Arc::new(ParquetTable::try_new(path, max_concurrency)?);
-        Self::scan(table_name, provider, projection, None)
+        Self::scan(table_name, provider, projection)
     }
 
     /// Scan an empty data source, mainly used in tests
@@ -171,7 +171,6 @@ impl LogicalPlanBuilder {
         table_name: impl Into<String>,
         provider: Arc<dyn TableProvider>,
         projection: Option<Vec<usize>>,
-        alias: Option<String>,
     ) -> Result<Self> {
         let table_name = table_name.into();
 
@@ -201,10 +200,9 @@ impl LogicalPlanBuilder {
         let table_scan = LogicalPlan::TableScan {
             table_name,
             source: provider,
-            projected_schema: Arc::new(projected_schema.alias(alias.as_deref())?), // TODO .or_else(|| name.split(".").last()) -- too many tests to fix
+            projected_schema: Arc::new(projected_schema),
             projection,
             filters: vec![],
-            alias,
             limit: None,
         };
 
@@ -260,7 +258,7 @@ impl LogicalPlanBuilder {
 
     /// Skip n rows
     pub fn skip(&self, n: usize) -> Result<Self> {
-        Ok(Self::from(&LogicalPlan::Skip {
+        Ok(Self::from(LogicalPlan::Skip {
             n,
             input: Arc::new(self.plan.clone()),
         }))
@@ -370,16 +368,11 @@ impl LogicalPlanBuilder {
         }))
     }
 
-    /// Apply a join with complex condition
-    pub fn cross_join(&self, right: &LogicalPlan, on: &Expr) -> Result<Self> {
-        let schema = Arc::new(build_join_schema(
-            self.plan.schema(),
-            right.schema(),
-            &[],
-            &JoinType::Left,
-        )?);
-        Ok(Self::from(&LogicalPlan::Extension {
-            node: Arc::new(CrossJoin {
+    /// Apply a skewed left cross join
+    pub fn skewed_left_cross_join(&self, right: &LogicalPlan, on: &Expr) -> Result<Self> {
+        let schema = Arc::new(self.plan.schema().join(right.schema())?);
+        Ok(Self::from(LogicalPlan::Extension {
+            node: Arc::new(SkewedLeftCrossJoin {
                 schema,
                 left: self.plan.clone(),
                 right: right.clone(),
@@ -524,15 +517,17 @@ pub fn union_with_alias(
         return Err(DataFusionError::Plan("Empty UNION".to_string()));
     }
 
-    let union_schema = (**inputs[0].schema()).clone();
-    let union_schema = Arc::new(match alias {
-        Some(ref alias) => union_schema.replace_qualifier(alias.as_str()),
-        None => union_schema.strip_qualifiers(),
-    });
-    if !inputs.iter().skip(1).all(|input_plan| {
+    let union_schema = build_union_schema(&alias, &inputs);
+    if !inputs.iter().all(|input_plan| {
         // union changes all qualifers in resulting schema, so we only need to
-        // match against arrow schema here, which doesn't include qualifiers
-        union_schema.matches_arrow_schema(&((**input_plan.schema()).clone().into()))
+        // match names.
+        let plan_names = input_plan
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().as_str());
+        let union_names = union_schema.fields().iter().map(|f| f.name().as_str());
+        plan_names.eq(union_names)
     }) {
         return Err(DataFusionError::Plan(
             "UNION ALL schemas are expected to be the same".to_string(),
@@ -544,6 +539,20 @@ pub fn union_with_alias(
         inputs,
         alias,
     })
+}
+
+/// Compute the schema for union
+pub fn build_union_schema(
+    alias: &Option<String>,
+    inputs: &[LogicalPlan],
+) -> Arc<DFSchema> {
+    assert!(1 <= inputs.len());
+    let union_schema = (**inputs[0].schema()).clone();
+    let union_schema = Arc::new(match alias {
+        Some(ref alias) => union_schema.replace_qualifier(alias.as_str()),
+        None => union_schema.strip_qualifiers(),
+    });
+    union_schema
 }
 
 /// Resolves an `Expr::Wildcard` to a collection of `Expr::Column`'s.

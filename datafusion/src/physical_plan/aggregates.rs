@@ -32,10 +32,10 @@ use super::{
     Accumulator, AggregateExpr, PhysicalExpr,
 };
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::DFSchema;
+
 use crate::physical_plan::distinct_expressions;
 use crate::physical_plan::expressions;
-use arrow::datatypes::{DataType, TimeUnit};
+use arrow::datatypes::{DataType, Schema, TimeUnit};
 use expressions::{avg_return_type, sum_return_type};
 use serde_derive::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, sync::Arc};
@@ -111,7 +111,7 @@ pub fn create_aggregate_expr(
     fun: &AggregateFunction,
     distinct: bool,
     args: &[Arc<dyn PhysicalExpr>],
-    input_schema: &DFSchema,
+    input_schema: &Schema,
     name: impl Into<String>,
 ) -> Result<Arc<dyn AggregateExpr>> {
     let name = name.into();

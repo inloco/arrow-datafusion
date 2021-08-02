@@ -29,7 +29,8 @@ use super::{
     },
     type_coercion::coerce,
 };
-use crate::logical_plan::DFSchema;
+
+use arrow::datatypes::Schema;
 use std::sync::Arc;
 
 /// Logical representation of a UDF.
@@ -99,7 +100,7 @@ impl ScalarUDF {
 pub fn create_physical_expr(
     fun: &ScalarUDF,
     args: &[Arc<dyn PhysicalExpr>],
-    input_schema: &DFSchema,
+    input_schema: &Schema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     // coerce
     let args = coerce(args, input_schema, &fun.signature)?;

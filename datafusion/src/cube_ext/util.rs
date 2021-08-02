@@ -168,6 +168,58 @@ macro_rules! cube_match_array {
     }};
 }
 
+/// Generic code to help implement generic operations on scalars.
+/// Callers must [ScalarValue] to use this.
+/// See usages for examples.
+#[macro_export]
+macro_rules! cube_match_scalar {
+    ($scalar: expr, $matcher: ident $(, $arg: tt)*) => {{
+        use arrow::array::*;
+        match $scalar {
+            ScalarValue::Boolean(v) => ($matcher!($($arg ,)* v, BooleanBuilder)),
+            ScalarValue::Float32(v) => ($matcher!($($arg ,)* v, Float32Builder)),
+            ScalarValue::Float64(v) => ($matcher!($($arg ,)* v, Float64Builder)),
+            ScalarValue::Int8(v) => ($matcher!($($arg ,)* v, Int8Builder)),
+            ScalarValue::Int16(v) => ($matcher!($($arg ,)* v, Int16Builder)),
+            ScalarValue::Int32(v) => ($matcher!($($arg ,)* v, Int32Builder)),
+            ScalarValue::Int64(v) => ($matcher!($($arg ,)* v, Int64Builder)),
+            ScalarValue::Int64Decimal(v, 0) => ($matcher!($($arg ,)* v, Int64Decimal0Builder)),
+            ScalarValue::Int64Decimal(v, 1) => ($matcher!($($arg ,)* v, Int64Decimal1Builder)),
+            ScalarValue::Int64Decimal(v, 2) => ($matcher!($($arg ,)* v, Int64Decimal2Builder)),
+            ScalarValue::Int64Decimal(v, 3) => ($matcher!($($arg ,)* v, Int64Decimal3Builder)),
+            ScalarValue::Int64Decimal(v, 4) => ($matcher!($($arg ,)* v, Int64Decimal4Builder)),
+            ScalarValue::Int64Decimal(v, 5) => ($matcher!($($arg ,)* v, Int64Decimal5Builder)),
+            ScalarValue::Int64Decimal(v, 10) => ($matcher!($($arg ,)* v, Int64Decimal10Builder)),
+            ScalarValue::Int64Decimal(v, scale) => {
+                panic!("unhandled scale for decimal: {}", scale)
+            }
+            ScalarValue::UInt8(v) => ($matcher!($($arg ,)* v, UInt8Builder)),
+            ScalarValue::UInt16(v) => ($matcher!($($arg ,)* v, UInt16Builder)),
+            ScalarValue::UInt32(v) => ($matcher!($($arg ,)* v, UInt32Builder)),
+            ScalarValue::UInt64(v) => ($matcher!($($arg ,)* v, UInt64Builder)),
+            ScalarValue::Utf8(v) => ($matcher!($($arg ,)* v, StringBuilder)),
+            ScalarValue::LargeUtf8(v) => ($matcher!($($arg ,)* v, LargeStringBuilder)),
+            ScalarValue::Date32(v) => ($matcher!($($arg ,)* v, Date32Builder)),
+            ScalarValue::Date64(v) => ($matcher!($($arg ,)* v, Date64Builder)),
+            ScalarValue::TimestampMicrosecond(v) => {
+                ($matcher!($($arg ,)* v, TimestampMicrosecondBuilder))
+            }
+            ScalarValue::TimestampNanosecond(v) => {
+                ($matcher!($($arg ,)* v, TimestampNanosecondBuilder))
+            }
+            ScalarValue::TimestampMillisecond(v) => {
+                ($matcher!($($arg ,)* v, TimestampMillisecondBuilder))
+            }
+            ScalarValue::TimestampSecond(v) => ($matcher!($($arg ,)* v, TimestampSecondBuilder)),
+            ScalarValue::IntervalYearMonth(v) => ($matcher!($($arg ,)* v, IntervalYearMonthBuilder)),
+            ScalarValue::IntervalDayTime(v) => ($matcher!($($arg ,)* v, IntervalDayTimeBuilder)),
+            ScalarValue::List(v, box dt) => ($matcher!($($arg ,)* v, dt, ListBuilder)),
+            ScalarValue::Binary(v) => ($matcher!($($arg ,)* v, BinaryBuilder)),
+            ScalarValue::LargeBinary(v) => ($matcher!($($arg ,)* v, LargeBinaryBuilder)),
+        }
+    }};
+}
+
 /// Panics if scalars are of different types.
 pub fn cmp_same_types(
     l: &ScalarValue,

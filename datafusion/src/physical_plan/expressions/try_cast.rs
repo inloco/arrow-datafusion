@@ -21,12 +21,11 @@ use std::sync::Arc;
 
 use super::ColumnarValue;
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::DFSchema;
 use crate::physical_plan::PhysicalExpr;
 use crate::scalar::ScalarValue;
 use arrow::compute;
 use arrow::compute::kernels;
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Schema};
 use arrow::record_batch::RecordBatch;
 use compute::can_cast_types;
 
@@ -68,11 +67,11 @@ impl PhysicalExpr for TryCastExpr {
         self
     }
 
-    fn data_type(&self, _input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(self.cast_type.clone())
     }
 
-    fn nullable(&self, _input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
         Ok(true)
     }
 
@@ -99,7 +98,7 @@ impl PhysicalExpr for TryCastExpr {
 /// Note that such casts may lose type information
 pub fn try_cast(
     expr: Arc<dyn PhysicalExpr>,
-    input_schema: &DFSchema,
+    input_schema: &Schema,
     cast_type: DataType,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     let expr_type = expr.data_type(input_schema)?;
@@ -119,7 +118,6 @@ pub fn try_cast(
 mod tests {
     use super::*;
     use crate::error::Result;
-    use crate::logical_plan::ToDFSchema;
     use crate::physical_plan::expressions::col;
     use arrow::array::{StringArray, Time64NanosecondArray};
     use arrow::{
@@ -136,7 +134,6 @@ mod tests {
     macro_rules! generic_test_cast {
         ($A_ARRAY:ident, $A_TYPE:expr, $A_VEC:expr, $TYPEARRAY:ident, $TYPE:expr, $VEC:expr) => {{
             let schema = Schema::new(vec![Field::new("a", $A_TYPE, false)]);
-            let dfschema = schema.clone().to_dfschema().unwrap();
             let a = $A_ARRAY::from($A_VEC);
             let batch =
                 RecordBatch::try_new(Arc::new(schema.clone()), vec![Arc::new(a)])?;
@@ -151,7 +148,7 @@ mod tests {
             );
 
             // verify that the expression's type is correct
-            assert_eq!(expression.data_type(&dfschema)?, $TYPE);
+            assert_eq!(expression.data_type(&schema)?, $TYPE);
 
             // compute
             let result = expression.evaluate(&batch)?.into_array(batch.num_rows());
@@ -246,7 +243,6 @@ mod tests {
     fn invalid_cast() {
         // Ensure a useful error happens at plan time if invalid casts are used
         let schema = Schema::new(vec![Field::new("a", DataType::Int32, false)]);
-        let schema = schema.to_dfschema().unwrap();
 
         let result = try_cast(col("a", &schema).unwrap(), &schema, DataType::LargeBinary);
         result.expect_err("expected Invalid CAST");

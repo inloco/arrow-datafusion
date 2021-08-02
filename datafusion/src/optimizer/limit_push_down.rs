@@ -63,7 +63,6 @@ fn limit_push_down(
                 filters,
                 limit,
                 projected_schema,
-                alias,
             },
             Some(upper_limit),
         ) => Ok(LogicalPlan::TableScan {
@@ -75,7 +74,6 @@ fn limit_push_down(
                 .map(|x| std::cmp::min(x, upper_limit))
                 .or(Some(upper_limit)),
             projected_schema: projected_schema.clone(),
-            alias: alias.clone(),
         }),
         (
             LogicalPlan::Projection {

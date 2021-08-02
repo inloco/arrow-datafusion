@@ -22,9 +22,9 @@ use std::{any::Any, sync::Arc};
 use arrow::compute;
 use arrow::{datatypes::DataType, record_batch::RecordBatch};
 
-use crate::logical_plan::DFSchema;
 use crate::physical_plan::{ColumnarValue, PhysicalExpr};
 use crate::{error::Result, scalar::ScalarValue};
+use arrow::datatypes::Schema;
 
 /// IS NULL expression
 #[derive(Debug)]
@@ -57,11 +57,11 @@ impl PhysicalExpr for IsNullExpr {
         self
     }
 
-    fn data_type(&self, _input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(DataType::Boolean)
     }
 
-    fn nullable(&self, _input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
         Ok(false)
     }
 

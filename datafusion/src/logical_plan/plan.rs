@@ -25,12 +25,12 @@ use crate::error::DataFusionError;
 use crate::logical_plan::dfschema::DFSchemaRef;
 use crate::sql::parser::FileType;
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use serde_derive::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     fmt::{self, Display},
     sync::Arc,
 };
-use serde_derive::{Deserialize, Serialize};
 
 /// Join type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ pub enum JoinType {
 }
 
 /// Join constraint
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum JoinConstraint {
     /// Join ON
     On,
@@ -172,8 +172,6 @@ pub enum LogicalPlan {
         projected_schema: DFSchemaRef,
         /// Optional expressions to be used as filters by the table provider
         filters: Vec<Expr>,
-        /// Alias
-        alias: Option<String>,
         /// Optional limit to skip reading
         limit: Option<usize>,
     },

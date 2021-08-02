@@ -31,11 +31,11 @@
 
 use std::{sync::Arc, vec};
 
-use arrow::datatypes::{DataType, TimeUnit};
+use arrow::datatypes::{DataType, Schema, TimeUnit};
 
 use super::{functions::Signature, PhysicalExpr};
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::DFSchema;
+
 use crate::physical_plan::expressions::try_cast;
 
 /// Returns `expressions` coerced to types compatible with
@@ -44,7 +44,7 @@ use crate::physical_plan::expressions::try_cast;
 /// See the module level documentation for more detail on coercion.
 pub fn coerce(
     expressions: &[Arc<dyn PhysicalExpr>],
-    schema: &DFSchema,
+    schema: &Schema,
     signature: &Signature,
 ) -> Result<Vec<Arc<dyn PhysicalExpr>>> {
     if expressions.is_empty() {
@@ -210,7 +210,7 @@ pub fn can_coerce_from(type_into: &DataType, type_from: &DataType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logical_plan::ToDFSchema;
+
     use crate::physical_plan::expressions::col;
     use arrow::datatypes::{DataType, Field, Schema};
 
@@ -277,8 +277,8 @@ mod tests {
         let case =
             |observed: Vec<DataType>, valid, expected: Vec<DataType>| -> Result<_> {
                 let schema = schema(observed.clone());
-                let expr = expressions(observed, schema.clone().to_dfschema()?)?;
-                let expected = expressions(expected, schema.clone().to_dfschema()?)?;
+                let expr = expressions(observed, schema.clone())?;
+                let expected = expressions(expected, schema.clone())?;
                 Ok((expr.clone(), schema, valid, expected))
             };
 
@@ -327,10 +327,7 @@ mod tests {
         ];
 
         for case in cases {
-            let observed = format!(
-                "{:?}",
-                coerce(&case.0, &case.1.clone().to_dfschema()?, &case.2)?
-            );
+            let observed = format!("{:?}", coerce(&case.0, &case.1, &case.2)?);
             let expected = format!("{:?}", case.3);
             assert_eq!(observed, expected);
         }
@@ -360,7 +357,7 @@ mod tests {
         ];
 
         for case in cases {
-            if coerce(&case.0, &case.1.clone().to_dfschema()?, &case.2).is_ok() {
+            if coerce(&case.0, &case.1, &case.2).is_ok() {
                 return Err(DataFusionError::Plan(format!(
                     "Error was expected in {:?}",
                     case

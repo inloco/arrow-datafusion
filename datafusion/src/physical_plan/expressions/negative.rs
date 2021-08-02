@@ -32,7 +32,7 @@ use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{ColumnarValue, PhysicalExpr};
 
 use super::coercion;
-use crate::logical_plan::DFSchema;
+use arrow::datatypes::Schema;
 
 /// Invoke a compute kernel on array(s)
 macro_rules! compute_op {
@@ -77,11 +77,11 @@ impl PhysicalExpr for NegativeExpr {
         self
     }
 
-    fn data_type(&self, input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, input_schema: &Schema) -> Result<DataType> {
         self.arg.data_type(input_schema)
     }
 
-    fn nullable(&self, input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, input_schema: &Schema) -> Result<bool> {
         self.arg.nullable(input_schema)
     }
 
@@ -118,7 +118,7 @@ impl PhysicalExpr for NegativeExpr {
 /// This function errors when the argument's type is not signed numeric
 pub fn negative(
     arg: Arc<dyn PhysicalExpr>,
-    input_schema: &DFSchema,
+    input_schema: &Schema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     let data_type = arg.data_type(input_schema)?;
     if !coercion::is_signed_numeric(&data_type) {

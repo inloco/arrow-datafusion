@@ -65,8 +65,6 @@ use super::{
 };
 use crate::cube_ext::alias::LogicalAlias;
 use crate::cube_ext::join::contains_table_scan;
-use crate::physical_plan::expressions::Column;
-use crate::sql::utils::clone_with_replacement;
 
 /// The ContextProvider trait allows the query planner to obtain meta-data about tables and
 /// functions referenced in SQL statements
@@ -389,26 +387,22 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 let mut filter = vec![];
 
                 // extract join keys
-                if let Err(e) =
-                    extract_join_keys(&expr, left_schema, right_schema, &mut keys, &mut filter)
-                {
+                extract_join_keys(
+                    &expr,
+                    left_schema,
+                    right_schema,
+                    &mut keys,
+                    &mut filter,
+                );
+                if !filter.is_empty() && !contains_table_scan(&left) {
                     // Complex condition, try cross join. We still prefer to **not** allow cross
                     // joins in general case to avoid abysmal performance.
                     // However, CubeStore needs this specific form for "rolling window" queries.
                     // TODO: take join_type into account.
-                    if !contains_table_scan(left) {
-                        return LogicalPlanBuilder::from(&left)
-                            .cross_join(right, &expr)?
-                            .build();
-                    } else {
-                        return Err(e);
-                    }
+                    return LogicalPlanBuilder::from(left)
+                        .skewed_left_cross_join(right, &expr)?
+                        .build();
                 }
-                let left_keys: Vec<&str> =
-                    keys.iter().map(|pair| pair.0.as_str()).collect();
-                let right_keys: Vec<&str> =
-                    keys.iter().map(|pair| pair.1.as_str()).collect();
-
                 let (left_keys, right_keys): (Vec<Column>, Vec<Column>) =
                     keys.into_iter().unzip();
                 // return the logical plan representing the join
@@ -654,13 +648,9 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 //
                 if false {
                     // Disabled in CubeStore.
-                    having_expr = resolve_aliases_to_exprs(
-                        &having_expr,
-                        &extract_aliases(&select_exprs),
-                    )?;
+                    having_expr = resolve_aliases_to_exprs(&having_expr, &alias_map)?
                 }
-                let having_expr = resolve_aliases_to_exprs(&having_expr, &alias_map)?;
-                normalize_col(having_expr, &projected_plan)
+                normalize_col(having_expr, &plan)
             })
             .transpose()?;
 
@@ -818,29 +808,6 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
         group_by_exprs: Vec<Expr>,
         aggr_exprs: Vec<Expr>,
     ) -> Result<(LogicalPlan, Vec<Expr>, Option<Expr>)> {
-        let group_by_exprs = group_by
-            .iter()
-            .map(|e| {
-                match e {
-                    SQLExpr::Value(Value::Number(n, _)) => match n.parse::<usize>() {
-                        Ok(n) => {
-                            if n - 1 < select_exprs.len() && n >= 1 {
-                                if !find_aggregate_exprs(&vec![select_exprs[n - 1].clone()]).is_empty() {
-                                    Err(DataFusionError::Plan(format!("Can't group by aggregate function: {:?}", select_exprs[n - 1])))
-                                } else {
-                                    Ok(select_exprs[n - 1].clone())
-                                }
-                            } else {
-                                Err(DataFusionError::Plan(format!("Select column reference should be within 1..{} but found {}", select_exprs.len(), n)))
-                            }
-                        },
-                        Err(_) => Err(DataFusionError::Plan(format!("Can't parse {} as number", n))),
-                    }
-                    _ => self.sql_to_rex(e, &input.schema())
-                }
-            })
-            .collect::<Result<Vec<Expr>>>()?;
-
         let aggr_projection_exprs = group_by_exprs
             .iter()
             .chain(aggr_exprs.iter())
@@ -897,7 +864,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
     /// Return a plan that skips first [count] rows
     fn skip_rows(
         &self,
-        input: &LogicalPlan,
+        input: LogicalPlan,
         count: &Option<Offset>,
     ) -> Result<LogicalPlan> {
         match count {
@@ -909,7 +876,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                     )),
                 }?;
 
-                LogicalPlanBuilder::from(&input).skip(n)?.build()
+                LogicalPlanBuilder::from(input).skip(n)?.build()
             }
             _ => Ok(input.clone()),
         }
@@ -944,39 +911,41 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
 
         let order_by_rex = order_by
             .iter()
-            .map(|e| {
-                Ok(Expr::Sort {
-                    expr: Box::new(
-                        match &e.expr {
-                            SQLExpr::Value(Value::Number(n, _)) => match n.parse::<usize>() {
-                                Ok(n) => {
-                                    let schema = plan.schema();
-                                    if n >= 1 && n - 1 < schema.fields().len() {
-                                        Ok(Expr::Column(schema.field(n - 1).name().to_string(), None))
-                                    } else {
-                                        Err(DataFusionError::Plan(format!("Select column reference should be within 1..{} but found {}", schema.fields().len(), n)))
-                                    }
-                                },
-                                Err(_) => Err(DataFusionError::Plan(format!("Can't parse {} as number", n))),
-                            }
-                            _ => self.order_by_to_sort_expr(e, plan.schema())
-                        }?
-                    ),
-                    // by default asc
-                    asc: e.asc.unwrap_or(true),
-                    // by default nulls first to be consistent with spark
-                    nulls_first: e.nulls_first.unwrap_or(true),
-                })
-            })
+            .map(|e| self.order_by_to_sort_expr(e, plan.schema(), true))
             .collect::<Result<Vec<_>>>()?;
 
         LogicalPlanBuilder::from(plan).sort(order_by_rex)?.build()
     }
 
     /// convert sql OrderByExpr to Expr::Sort
-    fn order_by_to_sort_expr(&self, e: &OrderByExpr, schema: &DFSchema) -> Result<Expr> {
+    fn order_by_to_sort_expr(
+        &self,
+        e: &OrderByExpr,
+        schema: &DFSchema,
+        resolve_positions: bool,
+    ) -> Result<Expr> {
+        let expr = match &e.expr {
+            SQLExpr::Value(Value::Number(n, _)) if resolve_positions => {
+                match n.parse::<usize>() {
+                    Ok(n) => {
+                        if n >= 1 && n - 1 < schema.fields().len() {
+                            Expr::Column(schema.field(n - 1).qualified_column())
+                        } else {
+                            return Err(DataFusionError::Plan(format!("Select column reference should be within 1..{} but found {}", schema.fields().len(), n)));
+                        }
+                    }
+                    Err(_) => {
+                        return Err(DataFusionError::Plan(format!(
+                            "Can't parse {} as number",
+                            n
+                        )))
+                    }
+                }
+            }
+            _ => self.sql_expr_to_logical_expr(&e.expr, schema)?,
+        };
         Ok(Expr::Sort {
-            expr: Box::new(self.sql_expr_to_logical_expr(&e.expr, schema)?),
+            expr: Box::new(expr),
             // by default asc
             asc: e.asc.unwrap_or(true),
             // by default nulls first to be consistent with spark
@@ -1039,16 +1008,6 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
     pub fn sql_to_rex(&self, sql: &SQLExpr, schema: &DFSchema) -> Result<Expr> {
         let expr = self.sql_expr_to_logical_expr(sql, schema)?;
         self.validate_schema_satisfies_exprs(schema, &[expr.clone()])?;
-        let expr = clone_with_replacement(&expr, &|expr| match expr {
-            Expr::Column(c, None) => Ok(Some(Expr::Column(
-                c.to_string(),
-                schema
-                    .field_with_unqualified_name(c)?
-                    .qualifier()
-                    .map(|a| a.to_string()),
-            ))),
-            _ => Ok(None),
-        })?;
         Ok(expr)
     }
 
@@ -1122,10 +1081,10 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                     let relation = Some(var_names.pop().unwrap());
                     Ok(Expr::Column(Column { relation, name }))
                 } else {
-                    Ok(Expr::Column(
-                        var_names[1].to_string(),
-                        Some(var_names[0].to_string()),
-                    ))
+                    Ok(Expr::Column(Column {
+                        relation: Some(var_names[0].to_string()),
+                        name: var_names[1].to_string(),
+                    }))
                 }
             }
 
@@ -1251,7 +1210,9 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                         Ok(Expr::BinaryExpr {
                             left: Box::new(self.sql_expr_to_logical_expr(&expr, schema)?),
                             op: Operator::Eq,
-                            right: Box::new(self.sql_expr_to_logical_expr(&right, schema)?),
+                            right: Box::new(
+                                self.sql_expr_to_logical_expr(&right, schema)?,
+                            ),
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -1341,7 +1302,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                     let order_by = window
                         .order_by
                         .iter()
-                        .map(|e| self.order_by_to_sort_expr(e, schema))
+                        .map(|e| self.order_by_to_sort_expr(e, schema, false))
                         .collect::<Result<Vec<_>>>()?;
                     let window_frame = window
                         .window_frame
@@ -1778,32 +1739,32 @@ fn extract_join_keys(
     expr: &Expr,
     ls: &DFSchema,
     rs: &DFSchema,
-    accum: &mut Vec<(String, String)>,
+    accum: &mut Vec<(Column, Column)>,
     accum_filter: &mut Vec<Expr>,
-) -> Result<()> {
+) {
     match expr {
         Expr::BinaryExpr { left, op, right } => match op {
             Operator::Eq => match (left.as_ref(), right.as_ref()) {
-                (Expr::Column(l, la), Expr::Column(r, ra)) => {
-                    let mut lc = Column::new_with_alias(l, la.clone());
-                    let mut rc = Column::new_with_alias(r, ra.clone());
+                (Expr::Column(lc), Expr::Column(rc)) => {
+                    let mut lc = lc.clone();
+                    let mut rc = rc.clone();
                     // `L = R` and `R = L` are equivalent, handle the latter case.
-                    if ls.field_with_name(lc.relation(), lc.name()).is_err()
-                        && rs.field_with_name(lc.relation(), lc.name()).is_ok()
+                    if ls.field_from_column(&lc).is_err()
+                        && rs.field_from_column(&lc).is_ok()
                     {
                         // Other cases should result in errors later, e.g. ambiguities in lookup.
                         std::mem::swap(&mut lc, &mut rc)
                     }
 
-                    accum.push((lc.full_name(), rc.full_name()));
+                    accum.push((lc, rc));
                 }
                 _other => {
                     accum_filter.push(expr.clone());
                 }
             },
             Operator::And => {
-                extract_join_keys(left, ls, rs, accum, accum_filter)?;
-                extract_join_keys(right, ls, rs, accum, accum_filter)
+                extract_join_keys(left, ls, rs, accum, accum_filter);
+                extract_join_keys(right, ls, rs, accum, accum_filter);
             }
             _other => {
                 accum_filter.push(expr.clone());
@@ -1862,6 +1823,7 @@ pub fn convert_data_type(sql: &SQLDataType) -> Result<DataType> {
 mod tests {
     use super::*;
     use crate::datasource::empty::EmptyTable;
+    use crate::execution::context::ExecutionProps;
     use crate::optimizer::optimizer::OptimizerRule;
     use crate::optimizer::projection_push_down::ProjectionPushDown;
     use crate::{logical_plan::create_udf, sql::parser::DFParser};
@@ -2077,10 +2039,10 @@ mod tests {
 
     #[test]
     fn table_with_column_alias() {
-        let sql = "SELECT a, b, c
-                   FROM lineitem l (a, b, c)";
-        let expected = "Projection: #a, #b, #c\
-                        \n  Projection: #l.l_item_id AS a, #l.l_description AS b, #l.price AS c\
+        let sql = "SELECT d, a, b, c
+                   FROM lineitem l (d, a, b, c)";
+        let expected = "Projection: #d, #a, #b, #c\
+                        \n  Projection: #l.item_id AS d, #l.l_item_id AS a, #l.l_description AS b, #l.price AS c\
                         \n    TableScan: l projection=None";
         quick_test(sql, expected);
     }
@@ -2091,7 +2053,7 @@ mod tests {
                    FROM lineitem l (a, b)";
         let err = logical_plan(sql).expect_err("query should have failed");
         assert_eq!(
-            "Plan(\"Source table contains 3 columns but only 2 names given as column alias\")",
+            "Plan(\"Source table contains 4 columns but only 2 names given as column alias\")",
             format!("{:?}", err)
         );
     }
@@ -2837,8 +2799,8 @@ mod tests {
     #[test]
     fn select_order_by_num_reference_desc() {
         let sql = "SELECT id FROM person ORDER BY 1 DESC";
-        let expected = "Sort: #id DESC NULLS FIRST\
-                        \n  Projection: #id\
+        let expected = "Sort: #person.id DESC NULLS FIRST\
+                        \n  Projection: #person.id\
                         \n    TableScan: person projection=None";
         quick_test(sql, expected);
     }
@@ -2905,8 +2867,8 @@ mod tests {
     fn select_group_by_needs_projection_with_replace() {
         let sql = "SELECT SUM(salary) / NULLIF(COUNT(state), 0), state FROM person GROUP BY state";
         let expected = "\
-        Projection: #SUM(salary) Divide nullif(#COUNT(state), Int64(0)), #state\
-        \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(#salary), COUNT(#state)]]\
+        Projection: #SUM(person.salary) Divide nullif(#COUNT(person.state), Int64(0)), #person.state\
+        \n  Aggregate: groupBy=[[#person.state]], aggr=[[SUM(#person.salary), COUNT(#person.state)]]\
         \n    TableScan: person projection=None";
 
         quick_test(sql, expected);
@@ -2916,8 +2878,8 @@ mod tests {
     fn select_group_by_needs_projection_with_case() {
         let sql = "SELECT SUM(CASE WHEN state = 'CA' THEN 1 ELSE 0 END) / NULLIF(COUNT(state), 0), state FROM person GROUP BY state";
         let expected = "\
-        Projection: #SUM(CASE WHEN #state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END) Divide nullif(#COUNT(state), Int64(0)), #state\
-        \n  Aggregate: groupBy=[[#state]], aggr=[[SUM(CASE WHEN #state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END), COUNT(#state)]]\
+        Projection: #SUM(CASE WHEN #person.state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END) Divide nullif(#COUNT(person.state), Int64(0)), #person.state\
+        \n  Aggregate: groupBy=[[#person.state]], aggr=[[SUM(CASE WHEN #person.state Eq Utf8(\"CA\") THEN Int64(1) ELSE Int64(0) END), COUNT(#person.state)]]\
         \n    TableScan: person projection=None";
 
         quick_test(sql, expected);
@@ -3036,7 +2998,7 @@ mod tests {
             FROM lineitem \
             JOIN lineitem as lineitem2 \
             USING (l_item_id)";
-        let expected = "Projection: #lineitem.l_item_id, #lineitem.l_description, #lineitem.price, #lineitem2.l_description, #lineitem2.price\
+        let expected = "Projection: #lineitem.item_id, #lineitem.l_item_id, #lineitem.l_description, #lineitem.price, #lineitem2.item_id, #lineitem2.l_description, #lineitem2.price\
         \n  Join: Using #lineitem.l_item_id = #lineitem2.l_item_id\
         \n    TableScan: lineitem projection=None\
         \n    TableScan: lineitem2 projection=None";
@@ -3493,11 +3455,11 @@ mod tests {
             JOIN lineitem_with_duplicate l ON o.item_id = l.item_id WHERE l.price > 10";
         let expected = "Projection: #p.id, #o.order_id, #l.l_description\
             \n  Filter: #l.price Gt Int64(10)\
-            \n    Join: o.item_id = l.item_id\
-            \n      Join: p.id = o.customer_id\
-            \n        TableScan: person projection=Some([0])\
-            \n        TableScan: orders projection=Some([0, 1, 2])\
-            \n      TableScan: lineitem_with_duplicate projection=Some([0, 2, 3])";
+            \n    Join: #o.item_id = #l.item_id\
+            \n      Join: #p.id = #o.customer_id\
+            \n        TableScan: p projection=Some([0])\
+            \n        TableScan: o projection=Some([0, 1, 2])\
+            \n      TableScan: l projection=Some([0, 2, 3])";
         let plan = optimize(&logical_plan(sql).unwrap()).unwrap();
         assert_eq!(expected, format!("{:?}", plan));
     }
@@ -3506,11 +3468,10 @@ mod tests {
     fn union_with_aliases_optimized() {
         let sql = "SELECT u.item_id, sum(u.price) \
             FROM (SELECT * FROM orders UNION ALL SELECT * FROM orders_1) u GROUP BY 1";
-        let expected = "Aggregate: groupBy=[[#u.item_id]], aggr=[[SUM(#u.price)]]\
-            \n  Union\
-            \n    Projection: #item_id, #price\
+        let expected = "Projection: #u.item_id, #SUM(u.price)\
+            \n  Aggregate: groupBy=[[#u.item_id]], aggr=[[SUM(#u.price)]]\
+            \n    Union\
             \n      TableScan: orders projection=Some([2, 5])\
-            \n    Projection: #item_id, #price\
             \n      TableScan: orders_1 projection=Some([2, 5])";
         let plan = optimize(&logical_plan(sql).unwrap()).unwrap();
         assert_eq!(expected, format!("{:?}", plan));
@@ -3518,9 +3479,10 @@ mod tests {
 
     fn optimize(plan: &LogicalPlan) -> Result<LogicalPlan> {
         let rule = ProjectionPushDown::new();
-        rule.optimize(plan)
+        rule.optimize(plan, &ExecutionProps::new())
     }
 
+    #[test]
     fn select_multibyte_column() {
         let sql = r#"SELECT "😀" FROM person"#;
         let expected = "Projection: #person.😀\
@@ -3585,6 +3547,7 @@ mod tests {
                     Field::new("item_id", DataType::UInt32, false),
                     Field::new("l_item_id", DataType::UInt32, false),
                     Field::new("l_description", DataType::Utf8, false),
+                    Field::new("price", DataType::Float64, false),
                 ])),
                 "lineitem_with_duplicate" => Some(Schema::new(vec![
                     Field::new("item_id", DataType::UInt32, false),

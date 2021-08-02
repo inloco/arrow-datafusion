@@ -30,7 +30,6 @@ use arrow::record_batch::RecordBatch;
 
 use super::SendableRecordBatchStream;
 
-use crate::logical_plan::{DFSchemaRef, ToDFSchema};
 use async_trait::async_trait;
 
 /// Execution plan for empty relation (produces no rows)
@@ -39,7 +38,7 @@ pub struct EmptyExec {
     /// Specifies whether this exec produces a row or not
     produce_one_row: bool,
     /// The schema for the produced row
-    schema: DFSchemaRef,
+    schema: SchemaRef,
 }
 
 impl EmptyExec {
@@ -47,7 +46,7 @@ impl EmptyExec {
     pub fn new(produce_one_row: bool, schema: SchemaRef) -> Self {
         EmptyExec {
             produce_one_row,
-            schema: schema.to_dfschema_ref().unwrap(),
+            schema,
         }
     }
 
@@ -64,7 +63,7 @@ impl ExecutionPlan for EmptyExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
@@ -121,7 +120,7 @@ impl ExecutionPlan for EmptyExec {
 
         Ok(Box::pin(MemoryStream::try_new(
             data,
-            self.schema.to_schema_ref(),
+            self.schema.clone(),
             None,
         )?))
     }
@@ -150,7 +149,7 @@ mod tests {
         let schema = test::aggr_test_schema();
 
         let empty = EmptyExec::new(false, schema.clone());
-        assert_eq!(empty.schema().to_schema_ref(), schema);
+        assert_eq!(empty.schema(), schema);
 
         // we should have no results
         let iter = empty.execute(0).await?;

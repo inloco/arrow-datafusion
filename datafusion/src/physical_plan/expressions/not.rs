@@ -23,11 +23,10 @@ use std::sync::Arc;
 
 use super::ColumnarValue;
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::DFSchema;
 use crate::physical_plan::PhysicalExpr;
 use crate::scalar::ScalarValue;
 use arrow::array::BooleanArray;
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Schema};
 use arrow::record_batch::RecordBatch;
 
 /// Not expression
@@ -61,11 +60,11 @@ impl PhysicalExpr for NotExpr {
         self
     }
 
-    fn data_type(&self, _input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(DataType::Boolean)
     }
 
-    fn nullable(&self, input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, input_schema: &Schema) -> Result<bool> {
         self.arg.nullable(input_schema)
     }
 
@@ -107,7 +106,7 @@ impl PhysicalExpr for NotExpr {
 /// This function errors when the argument's type is not boolean
 pub fn not(
     arg: Arc<dyn PhysicalExpr>,
-    input_schema: &DFSchema,
+    input_schema: &Schema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     let data_type = arg.data_type(input_schema)?;
     if data_type != DataType::Boolean {
@@ -124,14 +123,13 @@ pub fn not(
 mod tests {
     use super::*;
     use crate::error::Result;
-    use crate::logical_plan::ToDFSchema;
+
     use crate::physical_plan::expressions::col;
     use arrow::datatypes::*;
 
     #[test]
     fn neg_op() -> Result<()> {
         let schema = Schema::new(vec![Field::new("a", DataType::Boolean, true)]);
-        let schema = schema.to_dfschema().unwrap();
 
         let expr = not(col("a", &schema)?, &schema)?;
         assert_eq!(expr.data_type(&schema)?, DataType::Boolean);
@@ -157,7 +155,6 @@ mod tests {
     #[test]
     fn neg_op_not_null() {
         let schema = Schema::new(vec![Field::new("a", DataType::Utf8, true)]);
-        let schema = schema.to_dfschema().unwrap();
 
         let expr = not(col("a", &schema).unwrap(), &schema);
         assert!(expr.is_err());

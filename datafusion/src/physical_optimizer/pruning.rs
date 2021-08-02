@@ -44,6 +44,11 @@ use crate::{
     optimizer::utils,
     physical_plan::{planner::DefaultPhysicalPlanner, ColumnarValue, PhysicalExpr},
 };
+use arrow::array::{
+    Int64Array, Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array,
+    Int64Decimal2Array, Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array,
+};
+use std::iter::FromIterator;
 
 /// Interface to pass statistics information to [`PruningPredicates`]
 ///
@@ -342,7 +347,35 @@ fn build_statistics_record_batch<S: PruningStatistics>(
 
         // cast statistics array to required data type (e.g. parquet
         // provides timestamp statistics as "Int64")
-        let array = arrow::compute::cast(&array, data_type)?;
+        // Int64Decimal is special as we need to read values without conversion.
+        let array: ArrayRef = match data_type {
+            DataType::Int64Decimal(scale) => {
+                match array.as_any().downcast_ref::<Int64Array>() {
+                    None => {
+                        return Err(DataFusionError::Execution(format!(
+                            "expected decimal statistics stored in int64, got {}",
+                            data_type
+                        )))
+                    }
+                    Some(a) => match scale {
+                        0 => Arc::new(Int64Decimal0Array::from_iter(a.iter())),
+                        1 => Arc::new(Int64Decimal1Array::from_iter(a.iter())),
+                        2 => Arc::new(Int64Decimal2Array::from_iter(a.iter())),
+                        3 => Arc::new(Int64Decimal3Array::from_iter(a.iter())),
+                        4 => Arc::new(Int64Decimal4Array::from_iter(a.iter())),
+                        5 => Arc::new(Int64Decimal5Array::from_iter(a.iter())),
+                        10 => Arc::new(Int64Decimal10Array::from_iter(a.iter())),
+                        _ => {
+                            return Err(DataFusionError::Execution(format!(
+                                "unsupported scale for decimal: {}",
+                                scale
+                            )))
+                        }
+                    },
+                }
+            }
+            _ => arrow::compute::cast(&array, data_type)?,
+        };
 
         fields.push(stat_field.clone());
         arrays.push(array);
@@ -734,6 +767,16 @@ mod tests {
             }
         }
 
+        fn new_i64(
+            min: impl IntoIterator<Item = Option<i64>>,
+            max: impl IntoIterator<Item = Option<i64>>,
+        ) -> Self {
+            Self {
+                min: Arc::new(min.into_iter().collect::<Int64Array>()),
+                max: Arc::new(max.into_iter().collect::<Int64Array>()),
+            }
+        }
+
         fn new_utf8<'a>(
             min: impl IntoIterator<Item = Option<&'a str>>,
             max: impl IntoIterator<Item = Option<&'a str>>,
@@ -867,13 +910,13 @@ mod tests {
             (
                 "s4".into(),
                 StatisticsType::Max,
-                Field::new("s3_max", DataType::Boolean, true),
+                Field::new("s4_max", DataType::Boolean, true),
             ),
             // min of original column s4, named s4_min
             (
                 "s4".into(),
                 StatisticsType::Min,
-                Field::new("s3_min", DataType::Boolean, true),
+                Field::new("s4_min", DataType::Boolean, true),
             ),
         ]);
 
@@ -898,11 +941,11 @@ mod tests {
                     vec![Some("a"), None, None, None],      // min
                     vec![Some("q"), None, Some("r"), None], // max
                 ),
-            );
+            )
             .with(
                 "s4",
                 ContainerStats::new_bool(
-                    vec![Some(false), None, None, None],     // min
+                    vec![Some(false), None, None, None],       // min
                     vec![Some(true), None, Some(false), None], // max
                 ),
             );
@@ -1392,6 +1435,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Bool supported in CubeStore"]
     fn prune_bool_column_eq_true() {
         let (schema, statistics, _, _) = bool_setup();
 
@@ -1409,6 +1453,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Bool supported in CubeStore"]
     fn prune_bool_not_column_eq_true() {
         let (schema, statistics, _, _) = bool_setup();
 
@@ -1533,45 +1578,30 @@ mod tests {
         assert_eq!(result, expected_ret);
     }
 
-	// TODO: implement this so it works.
+    // TODO: implement this so it works.
     #[test]
-    fn row_group_predicate_builder_decimal_type() -> Result<()> {
-        // This is an addition in the Cube Dev fork. Originally copied from the
-        // `row_group_predicate_builder_unsupported_type` and modified to properly test booleans.
+    fn prune_decimal() {
         use crate::logical_plan::{col, lit};
         let expr = col("c").gt(lit(15));
-        let schema = Schema::new(vec![Field::new("c", DataType::Int64Decimal(2), false)]);
-        let predicate_builder = RowGroupPredicateBuilder::try_new(&expr, schema)?;
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "c",
+            DataType::Int64Decimal(2),
+            false,
+        )]));
+        let predicate_builder = PruningPredicate::try_new(&expr, schema).unwrap();
 
-        let schema_descr = get_test_schema_descr(vec![("c", PhysicalType::INT64)]);
-
-        let new_metadata = |min_i: i64, max_i: i64| {
+        let new_metadata = |min_i: &[i64], max_i: &[i64]| {
             // Note that we multiply by `100` to convert into int64decimal representation.
-            get_row_group_meta_data(
-                &schema_descr,
-                vec![ParquetStatistics::int64(
-                    Some(100 * min_i),
-                    Some(100 * max_i),
-                    None,
-                    0,
-                    false,
-                )],
+            TestStatistics::new().with(
+                "c",
+                ContainerStats::new_i64(
+                    min_i.into_iter().map(|v| Some(100 * v)),
+                    max_i.into_iter().map(|v| Some(100 * v)),
+                ),
             )
         };
-        let rgm1 = new_metadata(1, 10);
-        let rgm2 = new_metadata(11, 20);
-        let rgm3 = new_metadata(1, 20);
-
-        let row_group_metadata = vec![rgm1, rgm2, rgm3];
-        let row_group_predicate =
-            predicate_builder.build_row_group_predicate(&row_group_metadata);
-        let row_group_filter = row_group_metadata
-            .iter()
-            .enumerate()
-            .map(|(i, g)| row_group_predicate(g, i))
-            .collect::<Vec<_>>();
-        assert_eq!(row_group_filter, vec![false, true, true]);
-
-        Ok(())
+        let md = new_metadata(&[1, 11, 1], &[10, 20, 20]);
+        let result = predicate_builder.prune(&md).unwrap();
+        assert_eq!(result, vec![false, true, true]);
     }
 }

@@ -26,17 +26,18 @@ use futures::{Stream, StreamExt};
 
 use arrow::array::{ArrayRef, UInt32Array};
 use arrow::datatypes::{Schema, SchemaRef};
-use arrow::error::Result as ArrowResult;
+use arrow::error::{ArrowError, Result as ArrowResult};
 use arrow::record_batch::RecordBatch;
 
 use super::{
-    hash_utils::{build_join_schema, check_join_is_valid, JoinOn, JoinType},
+    hash_utils::{build_join_schema, check_join_is_valid, JoinOn},
     merge::MergeExec,
 };
 use crate::error::{DataFusionError, Result};
 
 use super::{ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream};
-use crate::logical_plan::DFSchemaRef;
+use crate::logical_plan::JoinType;
+use crate::physical_plan::expressions::Column;
 use arrow::compute::kernels::merge::{merge_join_indices, MergeJoinType};
 use arrow::compute::{concat, take};
 use std::task::Poll;
@@ -50,11 +51,11 @@ pub struct MergeJoinExec {
     /// right (probe) side which are filtered by the hash table
     right: Arc<dyn ExecutionPlan>,
     /// Set of common columns used to join on
-    on: Vec<(String, String)>,
+    on: JoinOn,
     /// How the join is performed
     join_type: JoinType,
     /// The schema once the join is applied
-    schema: DFSchemaRef,
+    schema: SchemaRef,
 }
 
 impl MergeJoinExec {
@@ -71,29 +72,19 @@ impl MergeJoinExec {
         let right_schema = right.schema();
         check_join_is_valid(&left_schema, &right_schema, &on)?;
 
-        let schema = Arc::new(build_join_schema(
-            &left_schema,
-            &right_schema,
-            on,
-            &join_type,
-        )?);
-
-        let on = on
-            .iter()
-            .map(|(l, r)| (l.to_string(), r.to_string()))
-            .collect();
+        let schema = Arc::new(build_join_schema(&left_schema, &right_schema, &join_type));
 
         Ok(Self {
             left,
             right,
-            on,
+            on: on.clone(),
             join_type: *join_type,
             schema,
         })
     }
 
     /// Columns to join on
-    pub fn join_on(&self) -> &[(String, String)] {
+    pub fn join_on(&self) -> &JoinOn {
         &self.on
     }
 }
@@ -104,7 +95,7 @@ impl ExecutionPlan for MergeJoinExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
@@ -151,7 +142,7 @@ impl ExecutionPlan for MergeJoinExec {
         let on_right = self.on.iter().map(|on| on.1.clone()).collect::<Vec<_>>();
 
         Ok(Box::pin(MergeJoinStream {
-            schema: self.schema.to_schema_ref(),
+            schema: self.schema.clone(),
             on_left,
             on_right,
             join_type: self.join_type,
@@ -168,9 +159,9 @@ struct MergeJoinStream {
     /// type of the join
     join_type: JoinType,
     /// columns from the left
-    on_left: Vec<String>,
+    on_left: Vec<Column>,
     /// columns from the right
-    on_right: Vec<String>,
+    on_right: Vec<Column>,
     /// left
     left: MergeJoinStreamState,
     /// right
@@ -383,8 +374,8 @@ fn merge_join(
     schema: SchemaRef,
     left: &RecordBatch,
     right: &RecordBatch,
-    on_left: &Vec<String>,
-    on_right: &Vec<String>,
+    on_left: &Vec<Column>,
+    on_right: &Vec<Column>,
     last_left: bool,
     last_right: bool,
     left_cursor: usize,
@@ -397,17 +388,13 @@ fn merge_join(
     ) = merge_join_indices(
         on_left
             .iter()
-            .map(|column_name| -> ArrowResult<ArrayRef> {
-                Ok(left.column(left.schema().index_of(column_name)?).clone())
-            })
-            .collect::<ArrowResult<Vec<_>>>()?
+            .map(|c| left.column(c.index()).clone())
+            .collect::<Vec<_>>()
             .as_slice(),
         on_right
             .iter()
-            .map(|column_name| -> ArrowResult<ArrayRef> {
-                Ok(right.column(right.schema().index_of(column_name)?).clone())
-            })
-            .collect::<ArrowResult<Vec<_>>>()?
+            .map(|c| right.column(c.index()).clone())
+            .collect::<Vec<_>>()
             .as_slice(),
         left_cursor,
         right_cursor,
@@ -417,22 +404,21 @@ fn merge_join(
             JoinType::Inner => MergeJoinType::Inner,
             JoinType::Left => MergeJoinType::Left,
             JoinType::Right => MergeJoinType::Right,
+            JoinType::Full | JoinType::Semi | JoinType::Anti => {
+                return Err(ArrowError::NotYetImplemented(
+                    "merge join supports only LEFT, RIGHT and INNER JOIN".to_string(),
+                ))
+            }
         },
     )?;
-    let columns = schema
-        .fields()
-        .iter()
-        .map(|field| {
-            left.schema()
-                .index_of(field.name())
-                .and_then(|i| take(left.column(i).as_ref(), left_indices.as_ref(), None))
-                .or_else(|_| {
-                    right.schema().index_of(field.name()).and_then(|i| {
-                        take(right.column(i).as_ref(), right_indices.as_ref(), None)
-                    })
-                })
-        })
-        .collect::<ArrowResult<Vec<_>>>()?;
+    let mut columns = Vec::with_capacity(left.columns().len() + right.columns().len());
+    for c in left.columns() {
+        columns.push(take(c.as_ref(), &left_indices, None)?);
+    }
+    for c in right.columns() {
+        columns.push(take(c.as_ref(), &right_indices, None)?);
+    }
+
     let batch = RecordBatch::try_new(schema, columns)?;
     Ok((
         (new_left_cursor, advance_left),
@@ -478,9 +464,16 @@ mod tests {
         on: &[(&str, &str)],
         join_type: &JoinType,
     ) -> Result<MergeJoinExec> {
+        let ls = left.schema();
+        let rs = right.schema();
         let on: Vec<_> = on
             .iter()
-            .map(|(l, r)| (l.to_string(), r.to_string()))
+            .map(|(l, r)| {
+                (
+                    Column::new_with_schema(l, &ls).unwrap(),
+                    Column::new_with_schema(r, &rs).unwrap(),
+                )
+            })
             .collect();
         MergeJoinExec::try_new(left, right, &on, join_type)
     }
@@ -502,19 +495,19 @@ mod tests {
         let join = join(left, right, on)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "b1", "c2"]);
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+----+----+",
-            "| a1 | b1 | c1 | a2 | c2 |",
-            "+----+----+----+----+----+",
-            "| 1  | 4  | 7  | 10 | 70 |",
-            "| 2  | 5  | 8  | 20 | 80 |",
-            "| 3  | 5  | 9  | 20 | 80 |",
-            "+----+----+----+----+----+",
+            "+----+----+----+----+----+----+",
+            "| a1 | b1 | c1 | a2 | b1 | c2 |",
+            "+----+----+----+----+----+----+",
+            "| 1  | 4  | 7  | 10 | 4  | 70 |",
+            "| 2  | 5  | 8  | 20 | 5  | 80 |",
+            "| 3  | 5  | 9  | 20 | 5  | 80 |",
+            "+----+----+----+----+----+----+",
         ];
         assert_batches_eq!(expected, &batches);
 
@@ -575,19 +568,19 @@ mod tests {
         let join = join(left, right, on)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b2", "c1", "c2"]);
+        assert_eq!(columns, vec!["a1", "b2", "c1", "a1", "b2", "c2"]);
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+----+",
-            "| a1 | b2 | c1 | c2 |",
-            "+----+----+----+----+",
-            "| 1  | 1  | 7  | 70 |",
-            "| 2  | 2  | 8  | 80 |",
-            "| 2  | 2  | 9  | 80 |",
-            "+----+----+----+----+",
+            "+----+----+----+----+----+----+",
+            "| a1 | b2 | c1 | a1 | b2 | c2 |",
+            "+----+----+----+----+----+----+",
+            "| 1  | 1  | 7  | 1  | 1  | 70 |",
+            "| 2  | 2  | 8  | 2  | 2  | 80 |",
+            "| 2  | 2  | 9  | 2  | 2  | 80 |",
+            "+----+----+----+----+----+----+",
         ];
 
         assert_batches_eq!(expected, &batches);
@@ -612,20 +605,20 @@ mod tests {
         let join = join_with_type(left, right, on, &JoinType::Left)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b2", "c1", "c2"]);
+        assert_eq!(columns, vec!["a1", "b2", "c1", "a1", "b2", "c2"]);
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+----+",
-            "| a1 | b2 | c1 | c2 |",
-            "+----+----+----+----+",
-            "| 1  | 1  | 7  | 70 |",
-            "| 2  | 2  | 8  | 80 |",
-            "| 2  | 2  | 9  | 80 |",
-            "| 3  | 3  | 2  |    |",
-            "+----+----+----+----+",
+            "+----+----+----+----+----+----+",
+            "| a1 | b2 | c1 | a1 | b2 | c2 |",
+            "+----+----+----+----+----+----+",
+            "| 1  | 1  | 7  | 1  | 1  | 70 |",
+            "| 2  | 2  | 8  | 2  | 2  | 80 |",
+            "| 2  | 2  | 9  | 2  | 2  | 80 |",
+            "| 3  | 3  | 2  |    |    |    |",
+            "+----+----+----+----+----+----+",
         ];
 
         assert_batches_eq!(expected, &batches);
@@ -658,19 +651,19 @@ mod tests {
         let join = join(left, right, on)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b2", "c1", "c2"]);
+        assert_eq!(columns, vec!["a1", "b2", "c1", "a1", "b2", "c2"]);
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+----+",
-            "| a1 | b2 | c1 | c2 |",
-            "+----+----+----+----+",
-            "| 1  | 1  | 7  | 70 |",
-            "| 2  | 2  | 8  | 80 |",
-            "| 2  | 2  | 9  | 80 |",
-            "+----+----+----+----+",
+            "+----+----+----+----+----+----+",
+            "| a1 | b2 | c1 | a1 | b2 | c2 |",
+            "+----+----+----+----+----+----+",
+            "| 1  | 1  | 7  | 1  | 1  | 70 |",
+            "| 2  | 2  | 8  | 2  | 2  | 80 |",
+            "| 2  | 2  | 9  | 2  | 2  | 80 |",
+            "+----+----+----+----+----+----+",
         ];
 
         assert_batches_eq!(expected, &batches);
@@ -704,22 +697,22 @@ mod tests {
         let join = join(left, right, on)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "b1", "c2"]);
 
         // first part
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+----+----+",
-            "| a1 | b1 | c1 | a2 | c2 |",
-            "+----+----+----+----+----+",
-            "| 1  | 4  | 7  | 10 | 70 |",
-            "| 2  | 5  | 8  | 20 | 80 |",
-            "| 2  | 5  | 8  | 30 | 90 |",
-            "| 3  | 5  | 9  | 20 | 80 |",
-            "| 3  | 5  | 9  | 30 | 90 |",
-            "+----+----+----+----+----+",
+            "+----+----+----+----+----+----+",
+            "| a1 | b1 | c1 | a2 | b1 | c2 |",
+            "+----+----+----+----+----+----+",
+            "| 1  | 4  | 7  | 10 | 4  | 70 |",
+            "| 2  | 5  | 8  | 20 | 5  | 80 |",
+            "| 2  | 5  | 8  | 30 | 5  | 90 |",
+            "| 3  | 5  | 9  | 20 | 5  | 80 |",
+            "| 3  | 5  | 9  | 30 | 5  | 90 |",
+            "+----+----+----+----+----+----+",
         ];
 
         assert_batches_eq!(expected, &batches);
@@ -769,28 +762,28 @@ mod tests {
         let join = join(left, right, on)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "b1", "c2"]);
 
         // first part
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+-----+-----+",
-            "| a1 | b1 | c1 | a2  | c2  |",
-            "+----+----+----+-----+-----+",
-            "| 1  | 4  | 7  | 10  | 70  |",
-            "| 2  | 5  | 8  | 20  | 80  |",
-            "| 2  | 5  | 8  | 120 | 180 |",
-            "| 2  | 5  | 8  | 30  | 90  |",
-            "| 3  | 5  | 9  | 20  | 80  |",
-            "| 3  | 5  | 9  | 120 | 180 |",
-            "| 3  | 5  | 9  | 30  | 90  |",
-            "| 2  | 5  | 1  | 20  | 80  |",
-            "| 2  | 5  | 1  | 120 | 180 |",
-            "| 2  | 5  | 1  | 30  | 90  |",
-            "| 3  | 6  | 9  | 40  | 100 |",
-            "+----+----+----+-----+-----+",
+            "+----+----+----+-----+----+-----+",
+            "| a1 | b1 | c1 | a2  | b1 | c2  |",
+            "+----+----+----+-----+----+-----+",
+            "| 1  | 4  | 7  | 10  | 4  | 70  |",
+            "| 2  | 5  | 8  | 20  | 5  | 80  |",
+            "| 2  | 5  | 8  | 120 | 5  | 180 |",
+            "| 2  | 5  | 8  | 30  | 5  | 90  |",
+            "| 3  | 5  | 9  | 20  | 5  | 80  |",
+            "| 3  | 5  | 9  | 120 | 5  | 180 |",
+            "| 3  | 5  | 9  | 30  | 5  | 90  |",
+            "| 2  | 5  | 1  | 20  | 5  | 80  |",
+            "| 2  | 5  | 1  | 120 | 5  | 180 |",
+            "| 2  | 5  | 1  | 30  | 5  | 90  |",
+            "| 3  | 6  | 9  | 40  | 6  | 100 |",
+            "+----+----+----+-----+----+-----+",
         ];
 
         assert_batches_eq!(expected, &batches);
@@ -840,30 +833,30 @@ mod tests {
         let join = join_with_type(left, right, on, &JoinType::Left)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "b1", "c2"]);
 
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+-----+-----+",
-            "| a1 | b1 | c1 | a2  | c2  |",
-            "+----+----+----+-----+-----+",
-            "|    |    |    |     |     |",
-            "|    |    | 3  |     |     |",
-            "| 0  |    |    |     |     |",
-            "| 1  | 4  | 7  | 10  | 70  |",
-            "| 2  | 5  | 8  | 20  | 80  |",
-            "| 2  | 5  | 8  | 120 | 180 |",
-            "| 2  | 5  | 8  | 30  | 90  |",
-            "| 3  | 5  | 9  | 20  | 80  |",
-            "| 3  | 5  | 9  | 120 | 180 |",
-            "| 3  | 5  | 9  | 30  | 90  |",
-            "| 2  | 5  | 1  | 20  | 80  |",
-            "| 2  | 5  | 1  | 120 | 180 |",
-            "| 2  | 5  | 1  | 30  | 90  |",
-            "| 3  | 6  | 9  | 40  | 100 |",
-            "+----+----+----+-----+-----+",
+            "+----+----+----+-----+----+-----+",
+            "| a1 | b1 | c1 | a2  | b1 | c2  |",
+            "+----+----+----+-----+----+-----+",
+            "|    |    |    |     |    |     |",
+            "|    |    | 3  |     |    |     |",
+            "| 0  |    |    |     |    |     |",
+            "| 1  | 4  | 7  | 10  | 4  | 70  |",
+            "| 2  | 5  | 8  | 20  | 5  | 80  |",
+            "| 2  | 5  | 8  | 120 | 5  | 180 |",
+            "| 2  | 5  | 8  | 30  | 5  | 90  |",
+            "| 3  | 5  | 9  | 20  | 5  | 80  |",
+            "| 3  | 5  | 9  | 120 | 5  | 180 |",
+            "| 3  | 5  | 9  | 30  | 5  | 90  |",
+            "| 2  | 5  | 1  | 20  | 5  | 80  |",
+            "| 2  | 5  | 1  | 120 | 5  | 180 |",
+            "| 2  | 5  | 1  | 30  | 5  | 90  |",
+            "| 3  | 6  | 9  | 40  | 6  | 100 |",
+            "+----+----+----+-----+----+-----+",
         ];
 
         assert_batches_eq!(expected, &batches);
@@ -903,25 +896,25 @@ mod tests {
         let join = join_with_type(left, right, on, &JoinType::Left)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "b1", "c2"]);
 
         // first part
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+----+----+",
-            "| a1 | b1 | c1 | a2 | c2 |",
-            "+----+----+----+----+----+",
-            "|    |    |    |    |    |",
-            "|    |    | 3  |    |    |",
-            "| 0  |    |    |    |    |",
-            "| 1  | 4  | 7  |    |    |",
-            "| 2  | 5  | 8  |    |    |",
-            "| 3  | 5  | 9  |    |    |",
-            "| 2  | 5  | 1  |    |    |",
-            "| 3  | 6  | 9  |    |    |",
-            "+----+----+----+----+----+",
+            "+----+----+----+----+----+----+",
+            "| a1 | b1 | c1 | a2 | b1 | c2 |",
+            "+----+----+----+----+----+----+",
+            "|    |    |    |    |    |    |",
+            "|    |    | 3  |    |    |    |",
+            "| 0  |    |    |    |    |    |",
+            "| 1  | 4  | 7  |    |    |    |",
+            "| 2  | 5  | 8  |    |    |    |",
+            "| 3  | 5  | 9  |    |    |    |",
+            "| 2  | 5  | 1  |    |    |    |",
+            "| 3  | 6  | 9  |    |    |    |",
+            "+----+----+----+----+----+----+",
         ];
 
         assert_batches_eq!(expected, &batches);
@@ -991,25 +984,25 @@ mod tests {
         let join = join_with_type(left, right, on, &JoinType::Left)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "b1", "c2"]);
 
         // first part
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+----+----+",
-            "| a1 | b1 | c1 | a2 | c2 |",
-            "+----+----+----+----+----+",
-            "|    |    |    |    |    |",
-            "|    |    | 3  |    |    |",
-            "| 0  |    |    |    |    |",
-            "| 1  | 4  | 7  |    |    |",
-            "| 2  | 5  | 8  |    |    |",
-            "| 3  | 5  | 9  |    |    |",
-            "| 2  | 5  | 1  |    |    |",
-            "| 3  | 6  | 9  |    |    |",
-            "+----+----+----+----+----+",
+            "+----+----+----+----+----+----+",
+            "| a1 | b1 | c1 | a2 | b1 | c2 |",
+            "+----+----+----+----+----+----+",
+            "|    |    |    |    |    |    |",
+            "|    |    | 3  |    |    |    |",
+            "| 0  |    |    |    |    |    |",
+            "| 1  | 4  | 7  |    |    |    |",
+            "| 2  | 5  | 8  |    |    |    |",
+            "| 3  | 5  | 9  |    |    |    |",
+            "| 2  | 5  | 1  |    |    |    |",
+            "| 3  | 6  | 9  |    |    |    |",
+            "+----+----+----+----+----+----+",
         ];
 
         assert_batches_eq!(expected, &batches);
@@ -1018,7 +1011,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn all_nulls_multiple() -> Result<()> {
+    async fn all_nulls_multiple() {
         let left_1 = build_table_i32_option(
             ("a1", &vec![None, None, None, None, None, None]),
             ("b1", &vec![None, None, None, None, None, None]),
@@ -1056,33 +1049,31 @@ mod tests {
 
         let on = &[("b1", "b1")];
 
-        let join = join_with_type(left, right, on, &JoinType::Left)?;
+        let join = join_with_type(left, right, on, &JoinType::Left).unwrap();
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "b1", "c2"]);
 
         // first part
-        let stream = join.execute(0).await?;
-        let batches = common::collect(stream).await?;
+        let stream = join.execute(0).await.unwrap();
+        let batches = common::collect(stream).await.unwrap();
 
         let expected = vec![
-            "+----+----+----+----+----+",
-            "| a1 | b1 | c1 | a2 | c2 |",
-            "+----+----+----+----+----+",
-            "|    |    |    |    |    |",
-            "|    |    |    |    |    |",
-            "|    |    |    |    |    |",
-            "|    |    |    |    |    |",
-            "|    |    |    |    |    |",
-            "|    |    |    |    |    |",
-            "|    |    |    |    |    |",
-            "|    |    |    |    |    |",
-            "+----+----+----+----+----+",
+            "+----+----+----+----+----+----+",
+            "| a1 | b1 | c1 | a2 | b1 | c2 |",
+            "+----+----+----+----+----+----+",
+            "|    |    |    |    |    |    |",
+            "|    |    |    |    |    |    |",
+            "|    |    |    |    |    |    |",
+            "|    |    |    |    |    |    |",
+            "|    |    |    |    |    |    |",
+            "|    |    |    |    |    |    |",
+            "|    |    |    |    |    |    |",
+            "|    |    |    |    |    |    |",
+            "+----+----+----+----+----+----+",
         ];
 
         assert_batches_eq!(expected, &batches);
-
-        Ok(())
     }
 
     #[tokio::test]
@@ -1156,58 +1147,58 @@ mod tests {
         let join = join_with_type(left, right, on, &JoinType::Left)?;
 
         let columns = columns(&join.schema());
-        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "c2"]);
+        assert_eq!(columns, vec!["a1", "b1", "c1", "a2", "b1", "c2"]);
 
         // first part
         let stream = join.execute(0).await?;
         let batches = common::collect(stream).await?;
 
         let expected = vec![
-            "+----+----+----+----+-----+",
-            "| a1 | b1 | c1 | a2 | c2  |",
-            "+----+----+----+----+-----+",
-            "|    |    |    |    |     |",
-            "|    |    | 3  |    |     |",
-            "| 0  |    |    |    |     |",
-            "| 1  | 4  | 7  | 10 | 70  |",
-            "| 2  | 5  | 8  | 11 | 111 |",
-            "| 2  | 5  | 8  | 12 | 112 |",
-            "| 2  | 5  | 8  | 21 | 121 |",
-            "| 2  | 5  | 8  | 22 | 122 |",
-            "| 2  | 5  | 8  | 31 | 131 |",
-            "| 2  | 5  | 8  | 32 | 132 |",
-            "| 2  | 5  | 8  | 33 | 133 |",
-            "| 2  | 5  | 8  | 41 | 141 |",
-            "| 2  | 5  | 8  | 42 | 142 |",
-            "| 2  | 5  | 8  | 43 | 143 |",
-            "| 2  | 5  | 8  | 44 | 144 |",
-            "| 2  | 5  | 8  | 51 | 151 |",
-            "| 3  | 5  | 9  | 11 | 111 |",
-            "| 3  | 5  | 9  | 12 | 112 |",
-            "| 3  | 5  | 9  | 21 | 121 |",
-            "| 3  | 5  | 9  | 22 | 122 |",
-            "| 3  | 5  | 9  | 31 | 131 |",
-            "| 3  | 5  | 9  | 32 | 132 |",
-            "| 3  | 5  | 9  | 33 | 133 |",
-            "| 3  | 5  | 9  | 41 | 141 |",
-            "| 3  | 5  | 9  | 42 | 142 |",
-            "| 3  | 5  | 9  | 43 | 143 |",
-            "| 3  | 5  | 9  | 44 | 144 |",
-            "| 3  | 5  | 9  | 51 | 151 |",
-            "| 2  | 5  | 1  | 11 | 111 |",
-            "| 2  | 5  | 1  | 12 | 112 |",
-            "| 2  | 5  | 1  | 21 | 121 |",
-            "| 2  | 5  | 1  | 22 | 122 |",
-            "| 2  | 5  | 1  | 31 | 131 |",
-            "| 2  | 5  | 1  | 32 | 132 |",
-            "| 2  | 5  | 1  | 33 | 133 |",
-            "| 2  | 5  | 1  | 41 | 141 |",
-            "| 2  | 5  | 1  | 42 | 142 |",
-            "| 2  | 5  | 1  | 43 | 143 |",
-            "| 2  | 5  | 1  | 44 | 144 |",
-            "| 2  | 5  | 1  | 51 | 151 |",
-            "| 3  | 6  | 9  | 52 | 152 |",
-            "+----+----+----+----+-----+",
+            "+----+----+----+----+----+-----+",
+            "| a1 | b1 | c1 | a2 | b1 | c2  |",
+            "+----+----+----+----+----+-----+",
+            "|    |    |    |    |    |     |",
+            "|    |    | 3  |    |    |     |",
+            "| 0  |    |    |    |    |     |",
+            "| 1  | 4  | 7  | 10 | 4  | 70  |",
+            "| 2  | 5  | 8  | 11 | 5  | 111 |",
+            "| 2  | 5  | 8  | 12 | 5  | 112 |",
+            "| 2  | 5  | 8  | 21 | 5  | 121 |",
+            "| 2  | 5  | 8  | 22 | 5  | 122 |",
+            "| 2  | 5  | 8  | 31 | 5  | 131 |",
+            "| 2  | 5  | 8  | 32 | 5  | 132 |",
+            "| 2  | 5  | 8  | 33 | 5  | 133 |",
+            "| 2  | 5  | 8  | 41 | 5  | 141 |",
+            "| 2  | 5  | 8  | 42 | 5  | 142 |",
+            "| 2  | 5  | 8  | 43 | 5  | 143 |",
+            "| 2  | 5  | 8  | 44 | 5  | 144 |",
+            "| 2  | 5  | 8  | 51 | 5  | 151 |",
+            "| 3  | 5  | 9  | 11 | 5  | 111 |",
+            "| 3  | 5  | 9  | 12 | 5  | 112 |",
+            "| 3  | 5  | 9  | 21 | 5  | 121 |",
+            "| 3  | 5  | 9  | 22 | 5  | 122 |",
+            "| 3  | 5  | 9  | 31 | 5  | 131 |",
+            "| 3  | 5  | 9  | 32 | 5  | 132 |",
+            "| 3  | 5  | 9  | 33 | 5  | 133 |",
+            "| 3  | 5  | 9  | 41 | 5  | 141 |",
+            "| 3  | 5  | 9  | 42 | 5  | 142 |",
+            "| 3  | 5  | 9  | 43 | 5  | 143 |",
+            "| 3  | 5  | 9  | 44 | 5  | 144 |",
+            "| 3  | 5  | 9  | 51 | 5  | 151 |",
+            "| 2  | 5  | 1  | 11 | 5  | 111 |",
+            "| 2  | 5  | 1  | 12 | 5  | 112 |",
+            "| 2  | 5  | 1  | 21 | 5  | 121 |",
+            "| 2  | 5  | 1  | 22 | 5  | 122 |",
+            "| 2  | 5  | 1  | 31 | 5  | 131 |",
+            "| 2  | 5  | 1  | 32 | 5  | 132 |",
+            "| 2  | 5  | 1  | 33 | 5  | 133 |",
+            "| 2  | 5  | 1  | 41 | 5  | 141 |",
+            "| 2  | 5  | 1  | 42 | 5  | 142 |",
+            "| 2  | 5  | 1  | 43 | 5  | 143 |",
+            "| 2  | 5  | 1  | 44 | 5  | 144 |",
+            "| 2  | 5  | 1  | 51 | 5  | 151 |",
+            "| 3  | 6  | 9  | 52 | 6  | 152 |",
+            "+----+----+----+----+----+-----+",
         ];
 
         assert_batches_eq!(expected, &batches);

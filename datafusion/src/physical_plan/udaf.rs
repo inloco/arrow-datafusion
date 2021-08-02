@@ -34,7 +34,8 @@ use super::{
     type_coercion::coerce,
     Accumulator, AggregateExpr,
 };
-use crate::logical_plan::DFSchema;
+
+use arrow::datatypes::Schema;
 use std::sync::Arc;
 
 /// Logical representation of a user-defined aggregate function (UDAF)
@@ -102,7 +103,7 @@ impl AggregateUDF {
 pub fn create_aggregate_expr(
     fun: &AggregateUDF,
     args: &[Arc<dyn PhysicalExpr>],
-    input_schema: &DFSchema,
+    input_schema: &Schema,
     name: impl Into<String>,
 ) -> Result<Arc<dyn AggregateExpr>> {
     // coerce

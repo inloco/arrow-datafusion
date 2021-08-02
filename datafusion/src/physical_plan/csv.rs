@@ -35,7 +35,6 @@ use std::task::{Context, Poll};
 
 use super::{DisplayFormatType, RecordBatchStream, SendableRecordBatchStream};
 use async_trait::async_trait;
-use std::convert::TryFrom;
 
 /// CSV file read option
 #[derive(Copy, Clone)]
@@ -114,7 +113,7 @@ pub struct CsvExec {
     /// Where the data comes from.
     source: Source,
     /// Schema representing the CSV file
-    schema: DFSchemaRef,
+    schema: SchemaRef,
     /// Does the CSV file have a header?
     has_header: bool,
     /// An optional column delimiter. Defaults to `b','`
@@ -124,7 +123,7 @@ pub struct CsvExec {
     /// Optional projection for which columns to load
     projection: Option<Vec<usize>>,
     /// Schema after the projection has been applied
-    projected_schema: DFSchemaRef,
+    projected_schema: SchemaRef,
     /// Batch size
     batch_size: usize,
     /// Limit in nr. of rows
@@ -151,16 +150,14 @@ impl CsvExec {
             )));
         }
 
-        let schema = DFSchema::try_from(match options.schema {
+        let schema = match options.schema {
             Some(s) => s.clone(),
             None => CsvExec::try_infer_schema(&filenames, &options)?,
-        })?;
+        };
 
         let projected_schema = match &projection {
             None => schema.clone(),
-            Some(p) => {
-                DFSchema::new(p.iter().map(|i| schema.field(*i).clone()).collect())?
-            }
+            Some(p) => Schema::new(p.iter().map(|i| schema.field(*i).clone()).collect()),
         };
 
         Ok(Self {
@@ -240,7 +237,7 @@ impl CsvExec {
     }
 
     /// Get the schema of the CSV file
-    pub fn file_schema(&self) -> DFSchemaRef {
+    pub fn file_schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
@@ -281,7 +278,7 @@ impl ExecutionPlan for CsvExec {
     }
 
     /// Get the schema for this execution plan
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.projected_schema.clone()
     }
 

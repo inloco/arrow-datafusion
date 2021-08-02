@@ -22,9 +22,9 @@ use std::sync::Arc;
 
 use arrow::{datatypes::DataType, record_batch::RecordBatch};
 
-use crate::logical_plan::DFSchema;
 use crate::physical_plan::{ColumnarValue, PhysicalExpr};
 use crate::{error::Result, scalar::ScalarValue};
+use arrow::datatypes::Schema;
 
 /// Represents a literal value
 #[derive(Debug)]
@@ -56,11 +56,11 @@ impl PhysicalExpr for Literal {
         self
     }
 
-    fn data_type(&self, _input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(self.value.get_datatype())
     }
 
-    fn nullable(&self, _input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
         // TODO: figure out how to do it properly.
         // Ok(self.value.is_null())
         Ok(true)

@@ -151,7 +151,9 @@ impl SortedAggState {
                                     current_agg.accumulators[i]
                                         .update(&value_scalars_buffer)?
                                 }
-                                AggregateMode::Final => current_agg.accumulators[i]
+                                AggregateMode::Final
+                                | AggregateMode::FinalPartitioned => current_agg
+                                    .accumulators[i]
                                     .merge(&value_scalars_buffer)?,
                             }
                         }
@@ -167,7 +169,7 @@ impl SortedAggState {
                             AggregateMode::Partial | AggregateMode::Full => current_agg
                                 .accumulators[i]
                                 .update_batch(&values_buffer)?,
-                            AggregateMode::Final => {
+                            AggregateMode::Final | AggregateMode::FinalPartitioned => {
                                 current_agg.accumulators[i].merge_batch(&values_buffer)?
                             }
                         }

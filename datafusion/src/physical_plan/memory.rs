@@ -31,7 +31,6 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 
-use crate::logical_plan::{DFSchemaRef, ToDFSchema};
 use async_trait::async_trait;
 use futures::Stream;
 
@@ -40,7 +39,7 @@ pub struct MemoryExec {
     /// The partitions to query
     partitions: Vec<Vec<RecordBatch>>,
     /// Schema representing the data after the optional projection is applied
-    schema: DFSchemaRef,
+    schema: SchemaRef,
     /// Optional projection
     projection: Option<Vec<usize>>,
 }
@@ -61,7 +60,7 @@ impl ExecutionPlan for MemoryExec {
     }
 
     /// Get the schema for this execution plan
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
@@ -88,7 +87,7 @@ impl ExecutionPlan for MemoryExec {
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(MemoryStream::try_new(
             self.partitions[partition].clone(),
-            self.schema.to_schema_ref(),
+            self.schema.clone(),
             self.projection.clone(),
         )?))
     }
@@ -122,7 +121,7 @@ impl MemoryExec {
     ) -> Result<Self> {
         Ok(Self {
             partitions: partitions.to_vec(),
-            schema: schema.to_dfschema_ref()?,
+            schema,
             projection,
         })
     }

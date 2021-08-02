@@ -298,7 +298,6 @@ mod tests {
             source: Arc::new(TestTableProvider { num_rows: 1000 }),
             projected_schema: Arc::new(DFSchema::empty()),
             filters: vec![],
-            alias: None,
             limit: None,
         };
 
@@ -308,7 +307,6 @@ mod tests {
             source: Arc::new(TestTableProvider { num_rows: 100 }),
             projected_schema: Arc::new(DFSchema::empty()),
             filters: vec![],
-            alias: None,
             limit: None,
         };
 

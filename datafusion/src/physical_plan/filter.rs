@@ -36,7 +36,7 @@ use arrow::record_batch::RecordBatch;
 
 use async_trait::async_trait;
 
-use crate::logical_plan::{DFSchemaRef, Operator};
+use crate::logical_plan::Operator;
 use crate::physical_plan::expressions::{
     BinaryExpr, CastExpr, Column, Literal, TryCastExpr,
 };
@@ -89,7 +89,7 @@ impl ExecutionPlan for FilterExec {
     }
 
     /// Get the schema for this execution plan
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         // The filter operator does not make any changes to the schema of its input
         self.input.schema()
     }
@@ -122,15 +122,8 @@ impl ExecutionPlan for FilterExec {
         let inputs_hints = self.input.output_hints();
 
         let mut single_value_columns = inputs_hints.single_value_columns;
-        let schema = self.schema().to_schema_ref();
         for c in extract_single_value_columns(self.predicate.as_ref()) {
-            if let Some(i) = c
-                .lookup_field(&schema)
-                .ok()
-                .and_then(|f| schema.index_of(f.name()).ok())
-            {
-                single_value_columns.push(i)
-            }
+            single_value_columns.push(c.index());
         }
         single_value_columns.sort_unstable();
         single_value_columns.dedup();
@@ -143,7 +136,7 @@ impl ExecutionPlan for FilterExec {
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(FilterExecStream {
-            schema: self.input.schema().to_schema_ref(),
+            schema: self.input.schema(),
             predicate: self.predicate.clone(),
             input: self.input.execute(partition).await?,
         }))
@@ -271,7 +264,6 @@ impl RecordBatchStream for FilterExecStream {
 mod tests {
 
     use super::*;
-    use crate::logical_plan::ToDFSchema;
     use crate::physical_plan::csv::{CsvExec, CsvReadOptions};
     use crate::physical_plan::expressions::*;
     use crate::physical_plan::ExecutionPlan;
@@ -300,16 +292,16 @@ mod tests {
                 col("c2", &schema)?,
                 Operator::Gt,
                 lit(ScalarValue::from(1u32)),
-                &schema.clone().to_dfschema()?,
+                &schema.clone(),
             )?,
             Operator::And,
             binary(
                 col("c2", &schema)?,
                 Operator::Lt,
                 lit(ScalarValue::from(4u32)),
-                &schema.clone().to_dfschema()?,
+                &schema,
             )?,
-            &schema.to_dfschema()?,
+            &schema,
         )?;
 
         let filter: Arc<dyn ExecutionPlan> =

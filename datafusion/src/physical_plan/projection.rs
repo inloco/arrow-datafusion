@@ -36,7 +36,6 @@ use arrow::record_batch::RecordBatch;
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use async_trait::async_trait;
 
-use crate::logical_plan::{DFSchemaRef, ToDFSchema};
 use crate::physical_plan::expressions::Column;
 use futures::stream::Stream;
 use futures::stream::StreamExt;
@@ -47,7 +46,7 @@ pub struct ProjectionExec {
     /// The projection expressions stored as tuples of (expression, output column name)
     expr: Vec<(Arc<dyn PhysicalExpr>, String)>,
     /// The schema once the projection has been applied to the input
-    schema: DFSchemaRef,
+    schema: SchemaRef,
     /// The input plan
     input: Arc<dyn ExecutionPlan>,
 }
@@ -75,7 +74,7 @@ impl ProjectionExec {
 
         Ok(Self {
             expr,
-            schema: schema.to_dfschema_ref()?,
+            schema,
             input: input.clone(),
         })
     }
@@ -99,7 +98,7 @@ impl ExecutionPlan for ProjectionExec {
     }
 
     /// Get the schema for this execution plan
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
@@ -129,7 +128,7 @@ impl ExecutionPlan for ProjectionExec {
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(ProjectionStream {
-            schema: self.schema.to_schema_ref(),
+            schema: self.schema.clone(),
             expr: self.expr.iter().map(|x| x.0.clone()).collect(),
             input: self.input.execute(partition).await?,
         }))
@@ -141,7 +140,7 @@ impl ExecutionPlan for ProjectionExec {
             return OptimizerHints::default();
         }
 
-        let input_schema = self.input.schema().to_schema_ref();
+        let input_schema = self.input.schema();
         let mut input_to_output = vec![None; input_schema.fields().len()];
         for out_i in 0..self.expr.len() {
             let column;
@@ -150,14 +149,7 @@ impl ExecutionPlan for ProjectionExec {
             } else {
                 continue;
             }
-            let input_index = column
-                .lookup_field(&input_schema)
-                .ok()
-                .and_then(|f| input_schema.index_of(f.name()).ok());
-            if input_index.is_none() {
-                continue;
-            }
-            input_to_output[input_index.unwrap()] = Some(out_i);
+            input_to_output[column.index()] = Some(out_i);
         }
 
         let single_value_columns = input_hints

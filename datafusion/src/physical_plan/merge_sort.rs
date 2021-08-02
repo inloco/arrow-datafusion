@@ -37,7 +37,7 @@ use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{ExecutionPlan, OptimizerHints, Partitioning};
 
 use crate::cube_ext::util::cmp_array_row_same_types;
-use crate::logical_plan::DFSchemaRef;
+use crate::physical_plan::expressions::Column;
 use crate::physical_plan::memory::MemoryStream;
 use arrow::array::{make_array, MutableArrayData};
 use async_trait::async_trait;
@@ -50,12 +50,12 @@ use std::collections::BinaryHeap;
 pub struct MergeSortExec {
     input: Arc<dyn ExecutionPlan>,
     /// Columns to sort on
-    pub columns: Vec<String>,
+    pub columns: Vec<Column>,
 }
 
 impl MergeSortExec {
     /// Create a new sort execution plan
-    pub fn try_new(input: Arc<dyn ExecutionPlan>, columns: Vec<String>) -> Result<Self> {
+    pub fn try_new(input: Arc<dyn ExecutionPlan>, columns: Vec<Column>) -> Result<Self> {
         if columns.is_empty() {
             return Err(DataFusionError::Internal(
                 "Empty columns passed for MergeSortExec".to_string(),
@@ -76,7 +76,7 @@ impl ExecutionPlan for MergeSortExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 
@@ -101,11 +101,7 @@ impl ExecutionPlan for MergeSortExec {
     fn output_hints(&self) -> OptimizerHints {
         OptimizerHints {
             single_value_columns: self.input.output_hints().single_value_columns,
-            sort_order: self
-                .columns
-                .iter()
-                .map(|c| self.schema().index_of(&c).ok())
-                .collect(),
+            sort_order: Some(self.columns.iter().map(|c| c.index()).collect()),
         }
     }
 
@@ -131,7 +127,7 @@ impl ExecutionPlan for MergeSortExec {
         }
 
         Ok(Box::pin(MergeSortStream::new(
-            self.input.schema().to_schema_ref(),
+            self.input.schema(),
             inputs,
             self.columns.clone(),
         )))
@@ -142,12 +138,12 @@ impl ExecutionPlan for MergeSortExec {
 #[derive(Debug)]
 pub struct MergeReSortExec {
     input: Arc<dyn ExecutionPlan>,
-    columns: Vec<String>,
+    columns: Vec<Column>,
 }
 
 impl MergeReSortExec {
     /// Create a new sort execution plan
-    pub fn try_new(input: Arc<dyn ExecutionPlan>, columns: Vec<String>) -> Result<Self> {
+    pub fn try_new(input: Arc<dyn ExecutionPlan>, columns: Vec<Column>) -> Result<Self> {
         Ok(Self { input, columns })
     }
 }
@@ -158,7 +154,7 @@ impl ExecutionPlan for MergeReSortExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 
@@ -202,7 +198,7 @@ impl ExecutionPlan for MergeReSortExec {
             .into_iter()
             .collect::<ArrowResult<Vec<_>>>()?;
 
-        let schema = self.input.schema().to_schema_ref();
+        let schema = self.input.schema();
         let sorted_batches = all_batches
             .into_iter()
             .map(|b| -> Result<SendableRecordBatchStream> {
@@ -215,7 +211,7 @@ impl ExecutionPlan for MergeReSortExec {
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Box::pin(MergeSortStream::new(
-            self.input.schema().to_schema_ref(),
+            self.input.schema(),
             sorted_batches,
             self.columns.clone(),
         )))
@@ -223,7 +219,7 @@ impl ExecutionPlan for MergeReSortExec {
 }
 
 fn sort_batch(
-    columns: &Vec<String>,
+    columns: &Vec<Column>,
     schema: &SchemaRef,
     batch: RecordBatch,
 ) -> ArrowResult<RecordBatch> {
@@ -231,7 +227,7 @@ fn sort_batch(
         .iter()
         .map(|c| -> ArrowResult<SortColumn> {
             Ok(SortColumn {
-                values: batch.column(batch.schema().index_of(c)?).clone(),
+                values: batch.column(c.index()).clone(),
                 options: None,
             })
         })
@@ -260,7 +256,7 @@ fn sort_batch(
 
 struct MergeSortStream {
     schema: SchemaRef,
-    columns: Vec<String>,
+    columns: Vec<Column>,
     poll_states: Vec<MergeSortStreamState>,
 }
 
@@ -268,7 +264,7 @@ impl MergeSortStream {
     fn new(
         schema: SchemaRef,
         inputs: Vec<SendableRecordBatchStream>,
-        columns: Vec<String>,
+        columns: Vec<Column>,
     ) -> Self {
         Self {
             schema,
@@ -397,7 +393,7 @@ impl Stream for MergeSortStream {
 
 fn merge_sort(
     batches: &[(usize, &RecordBatch)],
-    columns: &[String],
+    columns: &[Column],
     max_batch_rows: usize,
 ) -> ArrowResult<(Vec<usize>, RecordBatch)> {
     assert!(!columns.is_empty());
@@ -408,8 +404,7 @@ fn merge_sort(
     for (p, b) in batches {
         let mut key_cols = Vec::with_capacity(columns.len());
         for c in columns {
-            let i = b.schema().index_of(c)?;
-            key_cols.push(b.column(i));
+            key_cols.push(b.column(c.index()));
         }
 
         sort_keys.push(key_cols);
@@ -530,10 +525,9 @@ fn merge_sort(
         .collect();
     #[cfg(debug_assertions)]
     {
-        let s = batches[0].1.schema();
         let key_cols = columns
             .iter()
-            .map(|c| &result_cols[s.index_of(c).unwrap()])
+            .map(|c| &result_cols[c.index()])
             .collect::<Vec<_>>();
         for i in 1..result_cols[0].len() {
             debug_assert!(
@@ -647,7 +641,7 @@ mod tests {
                 schema.clone(),
                 None,
             )?),
-            vec!["a".to_string(), "b".to_string()],
+            vec![col("a", &schema), col("b", &schema)],
         )?);
 
         assert_eq!(DataType::UInt32, *sort_exec.schema().field(0).data_type());
@@ -756,7 +750,7 @@ mod tests {
                 schema.clone(),
                 None,
             )?),
-            vec!["a".to_string(), "b".to_string()],
+            vec![col("a", &schema), col("b", &schema)],
         )?);
 
         assert_eq!(DataType::UInt32, *sort_exec.schema().field(0).data_type());
@@ -852,7 +846,7 @@ mod tests {
                 schema.clone(),
                 None,
             )?),
-            vec!["a".to_string(), "b".to_string()],
+            vec![col("a", &schema), col("b", &schema)],
         )?);
 
         assert_eq!(DataType::UInt32, *sort_exec.schema().field(0).data_type());
@@ -901,11 +895,12 @@ mod tests {
         let p2 = vec![ints(vec![2, 4, 6]), ints(vec![8, 9])];
         let p3 = vec![ints(vec![5, 7, 10])];
 
+        let schema = ints_schema();
         let inp = Arc::new(
-            MemoryExec::try_new(&vec![p1, p2, p3], ints_schema(), None).unwrap(),
+            MemoryExec::try_new(&vec![p1, p2, p3], schema.clone(), None).unwrap(),
         );
         let r = collect(Arc::new(
-            MergeSortExec::try_new(inp, vec!["a".to_string()]).unwrap(),
+            MergeSortExec::try_new(inp, vec![col("a", &schema)]).unwrap(),
         ))
         .await
         .unwrap();
@@ -920,10 +915,11 @@ mod tests {
         let p1 = vec![ints(vec![1, 2])];
         let p2 = vec![ints(vec![]), ints(vec![0])];
 
+        let schema = ints_schema();
         let inp =
-            Arc::new(MemoryExec::try_new(&vec![p1, p2], ints_schema(), None).unwrap());
+            Arc::new(MemoryExec::try_new(&vec![p1, p2], schema.clone(), None).unwrap());
         let r = collect(Arc::new(
-            MergeSortExec::try_new(inp, vec!["a".to_string()]).unwrap(),
+            MergeSortExec::try_new(inp, vec![col("a", &schema)]).unwrap(),
         ))
         .await
         .unwrap();
@@ -1104,7 +1100,8 @@ mod tests {
                 &schema
                     .fields()
                     .iter()
-                    .map(|f| f.name().clone())
+                    .enumerate()
+                    .map(|(i, f)| Column::new(f.name(), i))
                     .collect_vec(),
                 128, // increase this if you want larger batches in tests.
             )
@@ -1122,5 +1119,9 @@ mod tests {
         }
 
         concat(&results.iter().map(|a| a.as_ref()).collect_vec()).unwrap()
+    }
+
+    fn col(name: &str, schema: &Schema) -> Column {
+        Column::new_with_schema(name, schema).unwrap()
     }
 }

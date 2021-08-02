@@ -171,7 +171,7 @@ impl DFSchema {
         self.fields
             .iter()
             .enumerate()
-            .find_map(|(i, f)| if f == &field { Some(i) } else { None })
+            .find_map(|(i, f)| if f == field { Some(i) } else { None })
             .ok_or_else(|| {
                 DataFusionError::Plan(format!(
                     "No field '{:?}' for schema: {}",
@@ -181,7 +181,7 @@ impl DFSchema {
     }
 
     /// Lookup by flatten string name. Name can be fully qualified or not.
-    pub fn lookup_field_by_string_name(&self, name: &str) -> Result<DFField> {
+    pub fn lookup_field_by_string_name(&self, name: &str) -> Result<&DFField> {
         let split = name.split('.').collect::<Vec<_>>();
         let field = if split.len() == 1 {
             self.field_with_unqualified_name(name)?
@@ -294,10 +294,22 @@ impl DFSchema {
 
     /// Check to see if unqualified field names matches field names in Arrow schema
     pub fn matches_arrow_schema(&self, arrow_schema: &Schema) -> bool {
-        self.fields
-            .iter()
-            .zip(arrow_schema.fields().iter())
-            .all(|(dffield, arrowfield)| dffield.name() == arrowfield.name())
+        // We cannot check for mismatch in nullable():
+        //  - binary expressions can become nullable because of the added TryCast nodes,
+        //  - constant evaluation can turn nullable expressions to non-nullable.
+        // We cannot check for names, because stripped qualifiers taint column names.
+        let logical = self.fields();
+        let physical = arrow_schema.fields();
+        if logical.len() != physical.len() {
+            return false;
+        }
+
+        for i in 0..logical.len() {
+            if logical[i].data_type() != physical[i].data_type() {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// Strip all field qualifier in schema

@@ -49,10 +49,12 @@ use arrow::{
     array::{ArrayRef, NullArray},
     compute::kernels::length::{bit_length, length},
     datatypes::TimeUnit,
-    datatypes::{DataType, Field, Int32Type, Int64Type},
+    datatypes::{DataType, Field, Int32Type, Int64Type, Schema},
     record_batch::RecordBatch,
 };
 use fmt::{Debug, Formatter};
+use serde_derive::Deserialize;
+use serde_derive::Serialize;
 use std::convert::From;
 use std::{any::Any, fmt, str::FromStr, sync::Arc};
 
@@ -653,7 +655,7 @@ pub fn create_physical_fun(
             ))
         }
         BuiltinScalarFunction::ConvertTz => {
-            |args| make_scalar_function(datetime_expressions::convert_tz)(args)
+            Arc::new(|args| make_scalar_function(datetime_expressions::convert_tz)(args))
         }
         BuiltinScalarFunction::InitCap => Arc::new(|args| match args[0].data_type() {
             DataType::Utf8 => {
@@ -1375,11 +1377,11 @@ impl PhysicalExpr for ScalarFunctionExpr {
         self
     }
 
-    fn data_type(&self, _input_schema: &DFSchema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(self.return_type.clone())
     }
 
-    fn nullable(&self, _input_schema: &DFSchema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
         Ok(true)
     }
 
@@ -1444,7 +1446,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logical_plan::ToDFSchema;
+
     use crate::{
         error::Result,
         physical_plan::expressions::{col, lit},
@@ -1474,14 +1476,13 @@ mod tests {
 
             // any type works here: we evaluate against a literal of `value`
             let schema = Schema::new(vec![Field::new("a", DataType::Int32, false)]);
-            let dfschema = schema.clone().to_dfschema().unwrap();
             let columns: Vec<ArrayRef> = vec![Arc::new(Int32Array::from(vec![1]))];
 
             let expr =
-                create_physical_expr(&BuiltinScalarFunction::$FUNC, $ARGS, &dfschema, &ctx_state)?;
+                create_physical_expr(&BuiltinScalarFunction::$FUNC, $ARGS, &schema, &ctx_state)?;
 
             // type is correct
-            assert_eq!(expr.data_type(&dfschema)?, DataType::$DATA_TYPE);
+            assert_eq!(expr.data_type(&schema)?, DataType::$DATA_TYPE);
 
             let batch = RecordBatch::try_new(Arc::new(schema.clone()), columns)?;
 
@@ -3685,7 +3686,7 @@ mod tests {
 
         // type is correct
         assert_eq!(
-            expr.data_type(&schema.clone().to_dfschema()?)?,
+            expr.data_type(&schema)?,
             // type equals to a common coercion
             DataType::FixedSizeList(Box::new(Field::new("item", expected_type, true)), 2)
         );
@@ -3761,7 +3762,7 @@ mod tests {
 
         // type is correct
         assert_eq!(
-            expr.data_type(&dfschema)?,
+            expr.data_type(&schema)?,
             DataType::List(Box::new(Field::new("item", DataType::Utf8, true)))
         );
 
@@ -3800,7 +3801,7 @@ mod tests {
 
         // type is correct
         assert_eq!(
-            expr.data_type(&dfschema)?,
+            expr.data_type(&schema)?,
             DataType::List(Box::new(Field::new("item", DataType::Utf8, true)))
         );
 

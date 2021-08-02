@@ -17,8 +17,8 @@
 
 use crate::cube_ext::stream::StreamWithSchema;
 use crate::error::DataFusionError;
-use crate::logical_plan::DFSchemaRef;
 use crate::physical_plan::{ExecutionPlan, Partitioning, SendableRecordBatchStream};
+use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use futures::{stream, StreamExt, TryStreamExt};
 use std::any::Any;
@@ -37,7 +37,7 @@ impl ExecutionPlan for SequenceExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 
@@ -77,9 +77,6 @@ impl ExecutionPlan for SequenceExec {
                 }
             })
             .try_flatten();
-        Ok(Box::pin(StreamWithSchema::wrap(
-            self.input.schema().to_schema_ref(),
-            s,
-        )))
+        Ok(Box::pin(StreamWithSchema::wrap(self.input.schema(), s)))
     }
 }

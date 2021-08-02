@@ -19,11 +19,11 @@
 
 use super::optimizer::OptimizerRule;
 use crate::execution::context::ExecutionProps;
+use crate::logical_plan::builder::build_union_schema;
 use crate::logical_plan::{
     build_join_schema, Column, DFSchemaRef, Expr, LogicalPlan, LogicalPlanBuilder,
     Operator, Partitioning, Recursion,
 };
-use crate::physical_plan::expressions::Column;
 use crate::prelude::lit;
 use crate::scalar::ScalarValue;
 use crate::{
@@ -195,11 +195,14 @@ pub fn from_plan(
         LogicalPlan::Extension { node } => Ok(LogicalPlan::Extension {
             node: node.from_template(expr, inputs),
         }),
-        LogicalPlan::Union { schema, alias, .. } => Ok(LogicalPlan::Union {
-            inputs: inputs.to_vec(),
-            schema: schema.clone(),
-            alias: alias.clone(),
-        }),
+        LogicalPlan::Union { alias, .. } => {
+            let schema = build_union_schema(alias, inputs);
+            Ok(LogicalPlan::Union {
+                inputs: inputs.to_vec(),
+                schema,
+                alias: alias.clone(),
+            })
+        }
         LogicalPlan::EmptyRelation { .. }
         | LogicalPlan::TableScan { .. }
         | LogicalPlan::CreateExternalTable { .. }
@@ -257,7 +260,7 @@ pub fn expr_sub_expressions(expr: &Expr) -> Result<Vec<Expr>> {
         }
         Expr::Cast { expr, .. } => Ok(vec![expr.as_ref().to_owned()]),
         Expr::TryCast { expr, .. } => Ok(vec![expr.as_ref().to_owned()]),
-        Expr::Column(_, _) => Ok(vec![]),
+        Expr::Column(_) => Ok(vec![]),
         Expr::Alias(expr, ..) => Ok(vec![expr.as_ref().to_owned()]),
         Expr::Literal(_) => Ok(vec![]),
         Expr::ScalarVariable(_) => Ok(vec![]),
@@ -405,7 +408,7 @@ pub fn rewrite_expression(expr: &Expr, expressions: &[Expr]) -> Result<Expr> {
         }
         Expr::Not(_) => Ok(Expr::Not(Box::new(expressions[0].clone()))),
         Expr::Negative(_) => Ok(Expr::Negative(Box::new(expressions[0].clone()))),
-        Expr::Column(_, _) => Ok(expr.clone()),
+        Expr::Column(_) => Ok(expr.clone()),
         Expr::Literal(_) => Ok(expr.clone()),
         Expr::ScalarVariable(_) => Ok(expr.clone()),
         Expr::Sort {

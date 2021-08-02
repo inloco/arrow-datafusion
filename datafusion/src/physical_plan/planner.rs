@@ -21,6 +21,9 @@ use super::{
     aggregates, cross_join::CrossJoinExec, empty::EmptyExec, expressions::binary,
     functions, hash_join::PartitionMode, udaf, union::UnionExec, windows,
 };
+use crate::cube_ext::alias::LogicalAliasPlanner;
+use crate::cube_ext::join::CrossJoinPlanner;
+use crate::cube_ext::joinagg::CrossJoinAggPlanner;
 use crate::execution::context::ExecutionContextState;
 use crate::logical_plan::{
     unnormalize_cols, DFSchema, Expr, LogicalPlan, Operator,
@@ -29,17 +32,23 @@ use crate::logical_plan::{
 };
 use crate::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use crate::physical_plan::explain::ExplainExec;
-use crate::physical_plan::expressions;
 use crate::physical_plan::expressions::{CaseExpr, Column, Literal, PhysicalSortExpr};
 use crate::physical_plan::filter::FilterExec;
-use crate::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec};
+use crate::physical_plan::hash_aggregate::{
+    AggregateMode, AggregateStrategy, HashAggregateExec,
+};
 use crate::physical_plan::hash_join::HashJoinExec;
 use crate::physical_plan::limit::{GlobalLimitExec, LocalLimitExec};
+use crate::physical_plan::merge::MergeExec;
+use crate::physical_plan::merge_join::MergeJoinExec;
+use crate::physical_plan::merge_sort::{MergeReSortExec, MergeSortExec};
 use crate::physical_plan::projection::ProjectionExec;
 use crate::physical_plan::repartition::RepartitionExec;
+use crate::physical_plan::skip::SkipExec;
 use crate::physical_plan::sort::SortExec;
 use crate::physical_plan::udf;
 use crate::physical_plan::windows::WindowAggExec;
+use crate::physical_plan::{expressions, ColumnarValue};
 use crate::physical_plan::{hash_utils, Partitioning};
 use crate::physical_plan::{AggregateExpr, ExecutionPlan, PhysicalExpr, WindowExpr};
 use crate::scalar::ScalarValue;
@@ -49,11 +58,16 @@ use crate::{
     error::{DataFusionError, Result},
     physical_plan::displayable,
 };
+use arrow::array::*;
 use arrow::compute::SortOptions;
+use arrow::datatypes::Field;
 use arrow::datatypes::{Schema, SchemaRef};
+use arrow::record_batch::RecordBatch;
 use arrow::{compute::can_cast_types, datatypes::DataType};
 use expressions::col;
+use itertools::Itertools;
 use log::debug;
+
 use std::sync::Arc;
 
 fn create_function_physical_name(
@@ -74,7 +88,8 @@ fn create_function_physical_name(
     Ok(format!("{}({}{})", fun, distinct_str, names.join(",")))
 }
 
-fn physical_name(e: &Expr, input_schema: &DFSchema) -> Result<String> {
+/// Used for column names in schemas
+pub fn physical_name(e: &Expr, input_schema: &DFSchema) -> Result<String> {
     match e {
         Expr::Column(c) => Ok(c.name.clone()),
         Expr::Alias(_, name) => Ok(name.clone()),
@@ -196,6 +211,15 @@ pub trait PhysicalPlanner {
         input_schema: &Schema,
         ctx_state: &ExecutionContextState,
     ) -> Result<Arc<dyn PhysicalExpr>>;
+
+    #[allow(missing_docs)]
+    fn create_aggregate_expr(
+        &self,
+        expr: &Expr,
+        input_dfschema: &DFSchema,
+        input_schema: &Schema,
+        ctx_state: &ExecutionContextState,
+    ) -> Result<Arc<dyn AggregateExpr>>;
 }
 
 /// This trait exposes the ability to plan an [`ExecutionPlan`] out of a [`LogicalPlan`].
@@ -277,6 +301,22 @@ impl PhysicalPlanner for DefaultPhysicalPlanner {
             ctx_state,
         )
     }
+
+    fn create_aggregate_expr(
+        &self,
+        expr: &Expr,
+        input_dfschema: &DFSchema,
+        input_schema: &Schema,
+        ctx_state: &ExecutionContextState,
+    ) -> Result<Arc<dyn AggregateExpr>> {
+        DefaultPhysicalPlanner::create_aggregate_expr(
+            self,
+            expr,
+            input_dfschema,
+            input_schema,
+            ctx_state,
+        )
+    }
 }
 
 impl DefaultPhysicalPlanner {
@@ -301,18 +341,14 @@ impl DefaultPhysicalPlanner {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let batch_size = ctx_state.config.batch_size;
 
-        match logical_plan {
+        let result: Result<Arc<dyn ExecutionPlan>> = match logical_plan {
             LogicalPlan::TableScan {
                 source,
                 projection,
                 filters,
-			    alias,
                 limit,
                 ..
             } => {
-                // TODO: this is CubeStore code, remove it.
-                Ok(AliasedSchemaExec::wrap(alias.clone(),
-                                           source.scan(projection, batch_size, filters, *limit)?)),
                 // Remove all qualifiers from the scan as the provider
                 // doesn't know (nor should care) how the relation was
                 // referred to in the query
@@ -478,19 +514,20 @@ impl DefaultPhysicalPlanner {
                         groups,
                         aggregates,
                         input_exec,
-                        input_schema.clone(),
+                        physical_input_schema.clone(),
                     )?));
                 }
 
-                let initial_aggr = Arc::new(HashAggregateExec::try_new(
-					strategy,
-					order.clone(),
-                    AggregateMode::Partial,
-                    groups.clone(),
-                    aggregates.clone(),
-                    input_exec,
-                    physical_input_schema.clone(),
-                )?);
+                let mut initial_aggr: Arc<dyn ExecutionPlan> =
+                    Arc::new(HashAggregateExec::try_new(
+                        strategy,
+                        order.clone(),
+                        AggregateMode::Partial,
+                        groups.clone(),
+                        aggregates.clone(),
+                        input_exec,
+                        physical_input_schema.clone(),
+                    )?);
 
                 if strategy == AggregateStrategy::InplaceSorted
                     && initial_aggr.output_partitioning().partition_count() != 1
@@ -498,7 +535,9 @@ impl DefaultPhysicalPlanner {
                 {
                     initial_aggr = Arc::new(MergeSortExec::try_new(
                         initial_aggr,
-                        groups.iter().map(|(_, name)| name.clone()).collect(),
+                        (0..groups.len())
+                            .map(|i| Column::new(&groups[i].1, i))
+                            .collect(),
                     )?);
                 }
 
@@ -541,7 +580,7 @@ impl DefaultPhysicalPlanner {
 
                 Ok(Arc::new(HashAggregateExec::try_new(
                     strategy,
-                    order
+                    order,
                     next_partition_mode,
                     final_group
                         .iter()
@@ -619,7 +658,7 @@ impl DefaultPhysicalPlanner {
                 )?;
                 Ok(Arc::new(FilterExec::try_new(runtime_expr, physical_input)?))
             }
-            LogicalPlan::Union { inputs, alias, .. } => {
+            LogicalPlan::Union { inputs, .. } => {
                 let physical_plans = inputs
                     .iter()
                     .map(|input| self.create_initial_plan(input, ctx_state))
@@ -644,7 +683,7 @@ impl DefaultPhysicalPlanner {
                     } else {
                         Arc::new(MergeExec::new(Arc::new(UnionExec::new(physical_plans))))
                     };
-                Ok(AliasedSchemaExec::wrap(alias.clone(), merge_node))
+                Ok(merge_node)
             }
             LogicalPlan::Repartition {
                 input,
@@ -728,21 +767,19 @@ impl DefaultPhysicalPlanner {
                     })
                     .collect::<Result<hash_utils::JoinOn>>()?;
 
-                let left_schema = left.schema();
-                let right_schema = right.schema();
                 let keys = &join_on;
                 if let (Some(left_node), Some(right_node)) = (
-                    self.merge_sort_node(left.clone()),
-                    self.merge_sort_node(right.clone()),
+                    self.merge_sort_node(physical_left.clone()),
+                    self.merge_sort_node(physical_right.clone()),
                 ) {
                     let left_to_join =
                         if left_node.as_any().downcast_ref::<MergeJoinExec>().is_some() {
                             Arc::new(MergeReSortExec::try_new(
-                                left,
-                                keys.iter().map(|(l, _)| l.to_string()).collect(),
+                                physical_left.clone(),
+                                keys.iter().map(|(l, _)| l.clone()).collect(),
                             )?)
                         } else {
-                            left
+                            physical_left
                         };
 
                     let right_to_join = if right_node
@@ -751,55 +788,62 @@ impl DefaultPhysicalPlanner {
                         .is_some()
                     {
                         Arc::new(MergeReSortExec::try_new(
-                            right,
-                            keys.iter().map(|(_, r)| r.to_string()).collect(),
+                            physical_right.clone(),
+                            keys.iter().map(|(_, r)| r.clone()).collect(),
                         )?)
                     } else {
-                        right
+                        physical_right
                     };
                     Ok(Arc::new(MergeJoinExec::try_new(
                         left_to_join,
                         right_to_join,
                         &keys,
-                        &physical_join_type,
+                        &join_type,
                     )?))
                 } else {
-					if ctx_state.config.concurrency > 1 && ctx_state.config.repartition_joins
-					{
-						let (left_expr, right_expr) = join_on
-							.iter()
-							.map(|(l, r)| {
-								(
-									Arc::new(l.clone()) as Arc<dyn PhysicalExpr>,
-									Arc::new(r.clone()) as Arc<dyn PhysicalExpr>,
-								)
-							})
-							.unzip();
+                    if ctx_state.config.concurrency > 1
+                        && ctx_state.config.repartition_joins
+                    {
+                        let (left_expr, right_expr) = join_on
+                            .iter()
+                            .map(|(l, r)| {
+                                (
+                                    Arc::new(l.clone()) as Arc<dyn PhysicalExpr>,
+                                    Arc::new(r.clone()) as Arc<dyn PhysicalExpr>,
+                                )
+                            })
+                            .unzip();
 
-						// Use hash partition by default to parallelize hash joins
-						Ok(Arc::new(HashJoinExec::try_new(
-							Arc::new(RepartitionExec::try_new(
-								physical_left,
-								Partitioning::Hash(left_expr, ctx_state.config.concurrency),
-							)?),
-							Arc::new(RepartitionExec::try_new(
-								physical_right,
-								Partitioning::Hash(right_expr, ctx_state.config.concurrency),
-							)?),
-							join_on,
-							join_type,
-							PartitionMode::Partitioned,
-						)?))
-					} else {
-						Ok(Arc::new(HashJoinExec::try_new(
-							physical_left,
-							physical_right,
-							join_on,
-							join_type,
-							PartitionMode::CollectLeft,
-						)?))
-					}
-				}
+                        // Use hash partition by default to parallelize hash joins
+                        Ok(Arc::new(HashJoinExec::try_new(
+                            Arc::new(RepartitionExec::try_new(
+                                physical_left,
+                                Partitioning::Hash(
+                                    left_expr,
+                                    ctx_state.config.concurrency,
+                                ),
+                            )?),
+                            Arc::new(RepartitionExec::try_new(
+                                physical_right,
+                                Partitioning::Hash(
+                                    right_expr,
+                                    ctx_state.config.concurrency,
+                                ),
+                            )?),
+                            join_on,
+                            join_type,
+                            PartitionMode::Partitioned,
+                        )?))
+                    } else {
+                        Ok(Arc::new(HashJoinExec::try_new(
+                            physical_left,
+                            physical_right,
+                            join_on,
+                            join_type,
+                            PartitionMode::CollectLeft,
+                        )?))
+                    }
+                }
             }
             LogicalPlan::CrossJoin { left, right, .. } => {
                 let left = self.create_initial_plan(left, ctx_state)?;
@@ -886,29 +930,9 @@ impl DefaultPhysicalPlanner {
                     Ok(plan)
                 }
             }
-        }
-    }
+        };
 
-    fn logical_schema_matches_physical(logical: &DFSchema, physical: &DFSchema) -> bool {
-		cubestore.remove this?
-        let logical = logical.fields();
-        let physical = physical.fields();
-        if logical.len() != physical.len() {
-            return false;
-        }
-
-        for i in 0..logical.len() {
-            if logical[i].data_type() != physical[i].data_type()
-                || logical[i].qualifier() != physical[i].qualifier()
-                || logical[i].name() != physical[i].name()
-            {
-                return false;
-            }
-            // We do not check for mismatch in nullable():
-            //  - binary expressions can become nullable because of the added TryCast nodes,
-            //  - constant evaluation can turn nullable expressions to non-nullable.
-        }
-        return true;
+        result
     }
 
     fn merge_sort_node(
@@ -919,8 +943,6 @@ impl DefaultPhysicalPlanner {
             || node.as_any().downcast_ref::<MergeJoinExec>().is_some()
         {
             Some(node.clone())
-        } else if let Some(aliased) = node.as_any().downcast_ref::<AliasedSchemaExec>() {
-            self.merge_sort_node(aliased.children()[0].clone())
         } else if let Some(aliased) = node.as_any().downcast_ref::<FilterExec>() {
             self.merge_sort_node(aliased.children()[0].clone())
         } else if let Some(aliased) = node.as_any().downcast_ref::<ProjectionExec>() {
@@ -1061,14 +1083,24 @@ impl DefaultPhysicalPlanner {
                 self.evaluate_constants(case_expr, args)
             }
             Expr::Cast { expr, data_type } => {
-                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                let input = self.create_physical_expr(
+                    expr,
+                    input_dfschema,
+                    input_schema,
+                    ctx_state,
+                )?;
                 self.evaluate_constants(
                     expressions::cast(input.clone(), input_schema, data_type.clone())?,
                     vec![input],
                 )
             }
             Expr::TryCast { expr, data_type } => {
-                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                let input = self.create_physical_expr(
+                    expr,
+                    input_dfschema,
+                    input_schema,
+                    ctx_state,
+                )?;
                 self.evaluate_constants(
                     expressions::try_cast(
                         input.clone(),
@@ -1079,25 +1111,45 @@ impl DefaultPhysicalPlanner {
                 )
             }
             Expr::Not(expr) => {
-                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                let input = self.create_physical_expr(
+                    expr,
+                    input_dfschema,
+                    input_schema,
+                    ctx_state,
+                )?;
                 self.evaluate_constants(
                     expressions::not(input.clone(), input_schema)?,
                     vec![input],
                 )
             }
             Expr::Negative(expr) => {
-                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                let input = self.create_physical_expr(
+                    expr,
+                    input_dfschema,
+                    input_schema,
+                    ctx_state,
+                )?;
                 self.evaluate_constants(
                     expressions::negative(input.clone(), input_schema)?,
                     vec![input],
                 )
             }
             Expr::IsNull(expr) => {
-                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                let input = self.create_physical_expr(
+                    expr,
+                    input_dfschema,
+                    input_schema,
+                    ctx_state,
+                )?;
                 self.evaluate_constants(expressions::is_null(input.clone())?, vec![input])
             }
             Expr::IsNotNull(expr) => {
-                let input = self.create_physical_expr(expr, input_schema, ctx_state)?;
+                let input = self.create_physical_expr(
+                    expr,
+                    input_dfschema,
+                    input_schema,
+                    ctx_state,
+                )?;
                 self.evaluate_constants(
                     expressions::is_not_null(input.clone())?,
                     vec![input],
@@ -1117,15 +1169,14 @@ impl DefaultPhysicalPlanner {
                     .collect::<Result<Vec<_>>>()?;
 
                 self.evaluate_constants(
-					functions::create_physical_expr(
-						fun,
-						&physical_args,
-						input_schema,
-						ctx_state,
-					)?,
+                    functions::create_physical_expr(
+                        fun,
+                        &physical_args,
+                        input_schema,
+                        ctx_state,
+                    )?,
                     physical_args,
                 )
-
             }
             Expr::ScalarUDF { fun, args } => {
                 let mut physical_args = vec![];
@@ -1139,12 +1190,13 @@ impl DefaultPhysicalPlanner {
                 }
 
                 self.evaluate_constants(
-					udf::create_physical_expr(
-						fun.clone().as_ref(),
-						&physical_args,
-						input_schema,
-					)?,
-				physical_args)
+                    udf::create_physical_expr(
+                        fun.clone().as_ref(),
+                        &physical_args,
+                        input_schema,
+                    )?,
+                    physical_args,
+                )
             }
             Expr::Between {
                 expr,
@@ -1639,7 +1691,6 @@ fn input_sorted_by_group_key(
     true
 }
 
-
 fn tuple_err<T, R>(value: (Result<T>, Result<R>)) -> Result<(T, R)> {
     match value {
         (Ok(e), Ok(e1)) => Ok((e, e1)),
@@ -1799,6 +1850,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "CubeStore does not checks the field names match"]
     fn bad_extension_planner() {
         // Test that creating an execution plan whose schema doesn't
         // match the logical plan's schema generates an error.

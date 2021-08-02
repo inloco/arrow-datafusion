@@ -15,13 +15,17 @@
 //! Filter Push Down optimizer rule ensures that filters are applied as early as possible in the plan
 
 use crate::datasource::datasource::TableProviderFilterPushDown;
+use crate::error::DataFusionError;
 use crate::execution::context::ExecutionProps;
 use crate::logical_plan::{and, replace_col, Column, LogicalPlan};
 use crate::logical_plan::{DFSchema, Expr};
 use crate::optimizer::optimizer::OptimizerRule;
+use crate::optimizer::projection_push_down::{
+    unalias_columns_in_expr, unalias_required_columns,
+};
 use crate::optimizer::utils;
-use crate::physical_plan::expressions::Column;
 use crate::{error::Result, logical_plan::Operator};
+
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -210,51 +214,6 @@ fn keep_filters(
         .collect::<Vec<_>>()
 }
 
-fn not_null_filters(filters: &[(Expr, HashSet<String>)]) -> bool {
-    !filters.is_empty() && filters.iter().all(|(f, _)| !matches!(f, Expr::IsNull(_)))
-}
-
-fn mirror_scalar_filters(
-    from_filters: &[(Expr, HashSet<String>)],
-    to_filters: &[(Expr, HashSet<String>)],
-    from_on: Vec<String>,
-    to_on: Vec<String>,
-    to_schema: &DFSchema,
-) -> Result<Vec<(Expr, HashSet<String>)>> {
-    Ok(from_filters
-        .iter()
-        .filter(|(_, columns)| from_on.iter().all(|f| columns.contains(f)))
-        .map(|(f, _)| -> Result<_> {
-            let expr = rewrite(
-                &f,
-                &from_on
-                    .iter()
-                    .zip(to_on.iter())
-                    .map(|(from, to)| -> Result<_> {
-                        let field = to_schema.lookup_field_by_string_name(to)?;
-                        Ok((
-                            from.to_string(),
-                            Expr::Column(
-                                field.name().to_string(),
-                                field.qualifier().cloned(),
-                            ),
-                        ))
-                    })
-                    .collect::<Result<HashMap<String, Expr>>>()?,
-            )?;
-            if to_filters.iter().any(|(to_filter, _)| to_filter == &expr) {
-                return Ok(None);
-            }
-            let mut new_columns = HashSet::new();
-            utils::expr_to_column_names(&expr, &mut new_columns)?;
-            Ok(Some((expr, new_columns)))
-        })
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .filter_map(|v| v)
-        .collect())
-}
-
 /// builds a new [LogicalPlan] from `plan` by issuing new [LogicalPlan::Filter] if any of the filters
 /// in `state` depend on the columns `used_columns`.
 fn issue_filters(
@@ -303,10 +262,11 @@ fn optimize_join(
 
     let mut left_state = state.clone();
     left_state.filters = keep_filters(&left_state.filters, &pushable_to_left);
-    let left = optimize(left, left_state)?;
 
     let mut right_state = state.clone();
     right_state.filters = keep_filters(&right_state.filters, &pushable_to_right);
+
+    let left = optimize(left, left_state)?;
     let right = optimize(right, right_state)?;
 
     // create a new Join with the new `left` and `right`
@@ -391,33 +351,6 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
 
             utils::from_plan(plan, expr, &[new_input])
         }
-        LogicalPlan::Union { schema, .. } => {
-            let used_columns = plan
-                .schema()
-                .fields()
-                .iter()
-                .map(|f| f.qualified_name())
-                .collect::<HashSet<_>>();
-
-            let mut projection = HashMap::new();
-            schema.fields().iter().for_each(|field| {
-                projection.insert(
-                    field.qualified_name(),
-                    Expr::Column(field.name().to_string(), None),
-                );
-            });
-
-            // re-write all filters based on this projection
-            // E.g. in `Filter: #b\n  Projection: #a > 1 as b`, we can swap them, but the filter must be "#a > 1"
-            for (predicate, columns) in state.filters.iter_mut() {
-                *predicate = rewrite(predicate, &projection)?;
-
-                columns.clear();
-                utils::expr_to_column_names(predicate, columns)?;
-            }
-
-            issue_filters(state, used_columns, plan)
-        }
         LogicalPlan::Aggregate {
             input, aggr_expr, ..
         } => {
@@ -441,9 +374,35 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             // sort is filter-commutable
             push_down(&state, plan)
         }
-        LogicalPlan::Union { .. } => {
+        LogicalPlan::Union {
+            inputs,
+            schema,
+            alias,
+        } => {
             // union all is filter-commutable
-            push_down(&state, plan)
+            let alias = match alias {
+                None => return push_down(&state, plan),
+                Some(a) => a,
+            };
+
+            let inputs = inputs
+                .iter()
+                .map(|p| {
+                    let schema = p.schema();
+                    let mut state = state.clone();
+                    for (predicate, cols) in &mut state.filters {
+                        *predicate = unalias_columns_in_expr(schema, predicate);
+                        *cols = unalias_required_columns(schema, cols);
+                    }
+                    optimize(p, state)
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            Ok(LogicalPlan::Union {
+                inputs,
+                schema: schema.clone(),
+                alias: Some(alias.clone()),
+            })
         }
         LogicalPlan::Limit { input, .. } | LogicalPlan::Skip { input, .. } => {
             // limit and skip are _not_ filter-commutable => collect all columns from their input
@@ -524,7 +483,6 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
             filters,
             projection,
             table_name,
-            alias,
             limit,
         } => {
             let mut used_columns = HashSet::new();
@@ -564,7 +522,6 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                     projected_schema: projected_schema.clone(),
                     table_name: table_name.clone(),
                     filters: new_filters,
-                    alias: alias.clone(),
                     limit: *limit,
                 },
             )
@@ -583,9 +540,13 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
 }
 
 fn strip_qualifiers(e: &Expr, schema: &DFSchema) -> Result<Expr> {
-    if let Expr::Column(name, Some(qual)) = &e {
-        // Sanity check: the field must be unambigous and present in the schema.
-        let f = schema.field_with_unqualified_name(&name)?;
+    if let Expr::Column(Column {
+        name,
+        relation: Some(qual),
+    }) = &e
+    {
+        // Sanity check: the field must be unambiguous and present in the schema.
+        let f = schema.field_with_unqualified_name(name)?;
         if f.qualifier() != Some(&qual) {
             return Err(DataFusionError::Plan(format!(
                 "The field has has qualifier {:?}, expected {:?}",
@@ -593,7 +554,7 @@ fn strip_qualifiers(e: &Expr, schema: &DFSchema) -> Result<Expr> {
                 qual
             )));
         }
-        return Ok(Expr::Column(name.clone(), None));
+        return Ok(Expr::Column(Column::from_name(name)));
     }
 
     let mut parts = utils::expr_sub_expressions(&e)?;
@@ -644,7 +605,9 @@ mod tests {
     use super::*;
     use crate::datasource::datasource::Statistics;
     use crate::datasource::TableProvider;
-    use crate::logical_plan::{lit, sum, DFSchema, Expr, LogicalPlanBuilder, Operator};
+    use crate::logical_plan::{
+        lit, sum, union_with_alias, DFSchema, Expr, LogicalPlanBuilder, Operator,
+    };
     use crate::physical_plan::ExecutionPlan;
     use crate::test::*;
     use crate::{logical_plan::col, prelude::JoinType};
@@ -970,6 +933,26 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn union_all_with_alias() -> Result<()> {
+        let table_scan = test_table_scan()?;
+        let plan = LogicalPlanBuilder::from(
+            union_with_alias(table_scan.clone(), table_scan, Some("united".to_string()))
+                .unwrap(),
+        )
+        .filter(col("united.a").eq(lit(1i64)))?
+        .build()?;
+        // filter appears below Union, qualifier stripped.
+        let expected = "\
+            Union\
+            \n  Filter: #test.a Eq Int64(1)\
+            \n    TableScan: test projection=None\
+            \n  Filter: #test.a Eq Int64(1)\
+            \n    TableScan: test projection=None";
+        assert_optimized_plan_eq(&plan, expected);
+        Ok(())
+    }
+
     /// verifies that filters with the same columns are correctly placed
     #[test]
     fn filter_2_breaks_limits() -> Result<()> {
@@ -1227,28 +1210,20 @@ mod tests {
 
     #[test]
     fn filter_three_tables() -> Result<()> {
-        let left = LogicalPlanBuilder::from(&test_table_scan_with_alias(Some(
-            "left".to_string(),
-        ))?)
-        // .project(vec![Expr::Column("a".to_owned(), Some("left".to_owned()))])?
-        .build()?;
-        let right = LogicalPlanBuilder::from(&test_table_scan_with_alias(Some(
-            "right".to_string(),
-        ))?)
-        // .project(vec![Expr::Column("c".to_owned(), Some("right".to_owned()))])?
-        .build()?;
-        let third = LogicalPlanBuilder::from(&test_table_scan_with_alias(Some(
-            "third".to_string(),
-        ))?)
-        // .project(vec![Expr::Column("b".to_owned(), Some("third".to_owned()))])?
-        .build()?;
+        let left = LogicalPlanBuilder::from(test_table_scan_with_alias("left")?)
+            // .project(vec![Expr::Column("a".to_owned(), Some("left".to_owned()))])?
+            .build()?;
+        let right = LogicalPlanBuilder::from(test_table_scan_with_alias("right")?)
+            // .project(vec![Expr::Column("c".to_owned(), Some("right".to_owned()))])?
+            .build()?;
+        let third = LogicalPlanBuilder::from(test_table_scan_with_alias("third")?)
+            // .project(vec![Expr::Column("b".to_owned(), Some("third".to_owned()))])?
+            .build()?;
 
-        let plan = LogicalPlanBuilder::from(&left)
-            .join(&right, JoinType::Inner, &["left.a"], &["right.c"])?
-            .join(&third, JoinType::Inner, &["left.a"], &["third.b"])?
-            .filter(
-                Expr::Column("c".to_owned(), Some("right".to_owned())).lt_eq(lit(1i64)),
-            )?
+        let plan = LogicalPlanBuilder::from(left)
+            .join(&right, JoinType::Inner, (vec!["left.a"], vec!["right.c"]))?
+            .join(&third, JoinType::Inner, (vec!["left.a"], vec!["third.b"]))?
+            .filter(Expr::Column("right.c".into()).lt_eq(lit(1i64)))?
             .build()?;
 
         // not part of the test, just good to know:
@@ -1256,21 +1231,21 @@ mod tests {
             format!("{:?}", plan),
             "\
             Filter: #right.c LtEq Int64(1)\
-            \n  Join: left.a = third.b\
-            \n    Join: left.a = right.c\
-            \n      TableScan: test projection=None\
-            \n      TableScan: test projection=None\
-            \n    TableScan: test projection=None"
+            \n  Join: #left.a = #third.b\
+            \n    Join: #left.a = #right.c\
+            \n      TableScan: left projection=None\
+            \n      TableScan: right projection=None\
+            \n    TableScan: third projection=None"
         );
 
         let expected = "\
-        Join: left.a = third.b\
-        \n  Join: left.a = right.c\
+        Join: #left.a = #third.b\
+        \n  Join: #left.a = #right.c\
         \n    Filter: #left.a LtEq Int64(1)\
-        \n      TableScan: test projection=None\
+        \n      TableScan: left projection=None\
         \n    Filter: #right.c LtEq Int64(1)\
-        \n      TableScan: test projection=None\
-        \n  TableScan: test projection=None";
+        \n      TableScan: right projection=None\
+        \n  TableScan: third projection=None";
         assert_optimized_plan_eq(&plan, expected);
         Ok(())
     }
@@ -1331,7 +1306,6 @@ mod tests {
             )?),
             projection: None,
             source: Arc::new(test_provider),
-            alias: None,
             limit: None,
         };
 

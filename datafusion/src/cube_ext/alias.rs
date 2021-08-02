@@ -18,9 +18,8 @@
 use crate::error::Result;
 use crate::execution::context::ExecutionContextState;
 use crate::logical_plan::{DFSchemaRef, Expr, LogicalPlan, UserDefinedLogicalNode};
-use crate::physical_plan::alias::AliasedSchemaExec;
 use crate::physical_plan::planner::ExtensionPlanner;
-use crate::physical_plan::ExecutionPlan;
+use crate::physical_plan::{ExecutionPlan, PhysicalPlanner};
 use smallvec::alloc::fmt::Formatter;
 use std::any::Any;
 use std::sync::Arc;
@@ -84,20 +83,16 @@ pub struct LogicalAliasPlanner;
 impl ExtensionPlanner for LogicalAliasPlanner {
     fn plan_extension(
         &self,
+        _planner: &dyn PhysicalPlanner,
         node: &dyn UserDefinedLogicalNode,
-        inputs: &[Arc<dyn ExecutionPlan>],
+        _logical_inputs: &[&LogicalPlan],
+        physical_inputs: &[Arc<dyn ExecutionPlan>],
         _: &ExecutionContextState,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let node = match node.as_any().downcast_ref::<LogicalAlias>() {
-            None => return Ok(None),
-            Some(n) => n,
+        if !node.as_any().is::<LogicalAlias>() {
+            return Ok(None);
         };
-
-        assert_eq!(inputs.len(), 1);
-        log::info!("Input is {:#?}", inputs[0]);
-        Ok(Some(AliasedSchemaExec::wrap(
-            Some(node.alias.clone()),
-            inputs[0].clone(),
-        )))
+        assert_eq!(physical_inputs.len(), 1);
+        Ok(Some(physical_inputs[0].clone()))
     }
 }

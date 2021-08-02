@@ -657,7 +657,8 @@ async fn csv_query_group_by_two_columns() -> Result<()> {
 async fn csv_query_group_by_and_having() -> Result<()> {
     let mut ctx = ExecutionContext::new();
     register_aggregate_csv(&mut ctx)?;
-    let sql = "SELECT c1, MIN(c3) AS m FROM aggregate_test_100 GROUP BY c1 HAVING m < -100 AND MAX(c3) > 70";
+    // CubeStore-specific: cannot lookup an aliased column.
+    let sql = "SELECT c1, MIN(c3) AS m FROM aggregate_test_100 GROUP BY c1 HAVING MIN(c3) < -100 AND MAX(c3) > 70";
     let actual = execute_to_batches(&mut ctx, sql).await;
     let expected = vec![
         "+----+------+",
@@ -675,11 +676,12 @@ async fn csv_query_group_by_and_having() -> Result<()> {
 async fn csv_query_group_by_and_having_and_where() -> Result<()> {
     let mut ctx = ExecutionContext::new();
     register_aggregate_csv(&mut ctx)?;
+    // CubeStore-specific: cannot lookup an aliased column.
     let sql = "SELECT c1, MIN(c3) AS m
                FROM aggregate_test_100
                WHERE c1 IN ('a', 'b')
                GROUP BY c1
-               HAVING m < -100 AND MAX(c3) > 70";
+               HAVING MIN(c3) < -100 AND MAX(c3) > 70";
     let actual = execute_to_batches(&mut ctx, sql).await;
     let expected = vec![
         "+----+------+",
@@ -700,7 +702,7 @@ async fn all_where_empty() -> Result<()> {
                FROM aggregate_test_100
                WHERE 1=2";
     let actual = execute_to_batches(&mut ctx, sql).await;
-    let expected = vec!["++", "++"];
+    let expected = vec!["++", "||", "++", "++"];
     assert_batches_eq!(expected, &actual);
     Ok(())
 }
@@ -2055,6 +2057,7 @@ fn create_join_context_qualified() -> Result<ExecutionContext> {
 }
 
 #[tokio::test]
+#[ignore = "CubeStore disables coalesce batches"]
 async fn csv_explain() {
     // This test uses the execute function that create full plan cycle: logical, optimized logical, and physical,
     // then execute the physical plan and return the final explain results
@@ -3931,6 +3934,7 @@ async fn test_cast_expressions_error() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "CubeStore disabled coalesce batches"]
 async fn test_physical_plan_display_indent() {
     // Hard code concurrency as it appears in the RepartitionExec output
     let config = ExecutionConfig::new().with_concurrency(3);
@@ -3977,6 +3981,7 @@ async fn test_physical_plan_display_indent() {
 }
 
 #[tokio::test]
+#[ignore = "CubeStore disabled coalesce batches"]
 async fn test_physical_plan_display_indent_multi_children() {
     // Hard code concurrency as it appears in the RepartitionExec output
     let config = ExecutionConfig::new().with_concurrency(3);

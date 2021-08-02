@@ -25,8 +25,8 @@ use std::{any::Any, sync::Arc};
 
 use super::{ExecutionPlan, Partitioning, SendableRecordBatchStream};
 use crate::error::Result;
-use crate::logical_plan::DFSchemaRef;
 use crate::physical_plan::OptimizerHints;
+use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 
 /// UNION ALL execution plan
@@ -50,7 +50,7 @@ impl ExecutionPlan for UnionExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.inputs[0].schema()
     }
 

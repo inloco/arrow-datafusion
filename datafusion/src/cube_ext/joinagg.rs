@@ -16,19 +16,22 @@
 // under the License.
 
 //! Optimized plan for CrossJoin followed by Aggregate.
-use crate::cube_ext::join::{left_cross_join, plan_cross_join, CrossJoin, CrossJoinExec};
+use crate::cube_ext::join::{
+    left_cross_join, plan_cross_join, CrossJoinExec, SkewedLeftCrossJoin,
+};
 use crate::cube_ext::stream::StreamWithSchema;
 use crate::error::Result;
-use crate::execution::context::ExecutionContextState;
+use crate::execution::context::{ExecutionContextState, ExecutionProps};
 use crate::logical_plan::{DFSchemaRef, Expr, LogicalPlan, UserDefinedLogicalNode};
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils::from_plan;
-use crate::physical_plan::hash_aggregate;
 use crate::physical_plan::hash_aggregate::{Accumulators, AggregateMode};
-use crate::physical_plan::planner::{DefaultPhysicalPlanner, ExtensionPlanner};
+use crate::physical_plan::planner::{physical_name, ExtensionPlanner};
+use crate::physical_plan::{hash_aggregate, PhysicalPlanner};
 use crate::physical_plan::{
     AggregateExpr, ExecutionPlan, Partitioning, PhysicalExpr, SendableRecordBatchStream,
 };
+use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use futures::{stream, StreamExt};
 use itertools::Itertools;
@@ -38,7 +41,7 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct CrossJoinAgg {
-    pub join: CrossJoin,
+    pub join: SkewedLeftCrossJoin,
     pub group_expr: Vec<Expr>,
     pub agg_expr: Vec<Expr>,
     pub schema: DFSchemaRef,
@@ -92,11 +95,15 @@ impl UserDefinedLogicalNode for CrossJoinAgg {
 
 pub struct FoldCrossJoinAggregate;
 impl OptimizerRule for FoldCrossJoinAggregate {
-    fn optimize(&self, plan: &LogicalPlan) -> Result<LogicalPlan> {
+    fn optimize(
+        &self,
+        plan: &LogicalPlan,
+        execution_props: &ExecutionProps,
+    ) -> Result<LogicalPlan> {
         let inputs = plan
             .inputs()
             .into_iter()
-            .map(|i| self.optimize(i))
+            .map(|i| self.optimize(i, execution_props))
             .collect::<Result<Vec<_>>>()?;
         let exprs = plan.expressions();
 
@@ -108,7 +115,9 @@ impl OptimizerRule for FoldCrossJoinAggregate {
                 input: join,
             } => match join.as_ref() {
                 LogicalPlan::Extension { node } => {
-                    if let Some(join) = node.as_any().downcast_ref::<CrossJoin>() {
+                    if let Some(join) =
+                        node.as_any().downcast_ref::<SkewedLeftCrossJoin>()
+                    {
                         return Ok(LogicalPlan::Extension {
                             node: Arc::new(CrossJoinAgg {
                                 join: join.clone(),
@@ -136,8 +145,10 @@ pub struct CrossJoinAggPlanner;
 impl ExtensionPlanner for CrossJoinAggPlanner {
     fn plan_extension(
         &self,
+        planner: &dyn PhysicalPlanner,
         node: &dyn UserDefinedLogicalNode,
-        inputs: &[Arc<dyn ExecutionPlan>],
+        _logical_inputs: &[&LogicalPlan],
+        physical_inputs: &[Arc<dyn ExecutionPlan>],
         ctx_state: &ExecutionContextState,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
         let node = match node.as_any().downcast_ref::<CrossJoinAgg>() {
@@ -145,15 +156,20 @@ impl ExtensionPlanner for CrossJoinAggPlanner {
             Some(j) => j,
         };
 
-        let join = plan_cross_join(&node.join, inputs, ctx_state)?;
+        let inputs = physical_inputs;
+        let join = plan_cross_join(planner, &node.join, inputs, ctx_state)?;
         let logical_join_schema = &node.join.schema;
         let physical_join_schema = join.schema();
 
-        let planner = DefaultPhysicalPlanner::default();
         let mut group_expr = Vec::new();
         for e in &node.group_expr {
-            let expr = planner.create_physical_expr(e, logical_join_schema, ctx_state)?;
-            let name = e.name(logical_join_schema)?;
+            let expr = planner.create_physical_expr(
+                e,
+                logical_join_schema,
+                &physical_join_schema,
+                ctx_state,
+            )?;
+            let name = physical_name(e, logical_join_schema)?;
             group_expr.push((expr, name));
         }
         let mut agg_expr = Vec::new();
@@ -183,7 +199,7 @@ impl ExtensionPlanner for CrossJoinAggPlanner {
 
 #[derive(Debug)]
 pub struct CrossJoinAggExec {
-    pub schema: DFSchemaRef,
+    pub schema: SchemaRef,
     pub join: CrossJoinExec,
     pub group_expr: Vec<(Arc<dyn PhysicalExpr>, String)>,
     pub agg_expr: Vec<Arc<dyn AggregateExpr>>,
@@ -195,7 +211,7 @@ impl ExecutionPlan for CrossJoinAggExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
@@ -222,11 +238,13 @@ impl ExecutionPlan for CrossJoinAggExec {
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
         assert_eq!(partition, 0);
         let group_expr = self.group_expr.iter().map(|g| g.0.clone()).collect_vec();
-        let join_schema = self.join.schema.to_schema_ref();
         let left = self.join.compute_left().await?;
 
-        let aggs =
-            hash_aggregate::aggregate_expressions(&self.agg_expr, &AggregateMode::Full)?;
+        let aggs = hash_aggregate::aggregate_expressions(
+            &self.agg_expr,
+            &AggregateMode::Full,
+            self.group_expr.len(),
+        )?;
         let mut accumulators = Accumulators::new();
         for partition in 0..self.join.right.output_partitioning().partition_count() {
             let mut batches = self.join.right.execute(partition).await?;
@@ -235,7 +253,7 @@ impl ExecutionPlan for CrossJoinAggExec {
                 left_cross_join(
                     &left,
                     &right,
-                    &join_schema,
+                    &self.join.schema,
                     self.join.on.as_ref(),
                     |joined, included| {
                         accumulators = hash_aggregate::group_aggregate_batch(
@@ -253,7 +271,7 @@ impl ExecutionPlan for CrossJoinAggExec {
             }
         }
 
-        let out_schema = self.schema.to_schema_ref();
+        let out_schema = self.schema.clone();
         let r = hash_aggregate::create_batch_from_map(
             &AggregateMode::Full,
             &accumulators,

@@ -364,7 +364,7 @@ impl ExecutionPlan for TopKExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 

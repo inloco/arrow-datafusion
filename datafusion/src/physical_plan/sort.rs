@@ -20,7 +20,6 @@
 use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::cube_ext;
 use crate::error::{DataFusionError, Result};
-use crate::logical_plan::DFSchemaRef;
 use crate::physical_plan::expressions::PhysicalSortExpr;
 use crate::physical_plan::{
     common, DisplayFormatType, Distribution, ExecutionPlan, Partitioning, SQLMetric,
@@ -100,7 +99,7 @@ impl ExecutionPlan for SortExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 

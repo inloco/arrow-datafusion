@@ -27,7 +27,7 @@ use futures::stream::StreamExt;
 
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{
-    DisplayFormatType, Distribution, ExecutionPlan, Partitioning,
+    DisplayFormatType, Distribution, ExecutionPlan, OptimizerHints, Partitioning,
 };
 use arrow::array::ArrayRef;
 use arrow::compute::limit;
@@ -37,7 +37,6 @@ use arrow::record_batch::RecordBatch;
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
 
-use crate::logical_plan::DFSchemaRef;
 use async_trait::async_trait;
 
 /// Limit execution plan
@@ -73,7 +72,7 @@ impl ExecutionPlan for GlobalLimitExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 
@@ -175,7 +174,7 @@ impl ExecutionPlan for LocalLimitExec {
         self
     }
 
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 

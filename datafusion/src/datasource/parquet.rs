@@ -46,7 +46,7 @@ impl ParquetTable {
     pub fn try_new(path: impl Into<String>, max_concurrency: usize) -> Result<Self> {
         let path = path.into();
         let parquet_exec = ParquetExec::try_from_path(&path, None, None, 0, 1, None)?;
-        let schema = parquet_exec.schema().to_schema_ref();
+        let schema = parquet_exec.schema();
         Ok(Self {
             path,
             schema,

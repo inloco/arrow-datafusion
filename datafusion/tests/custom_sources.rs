@@ -103,7 +103,7 @@ impl ExecutionPlan for CustomExecutionPlan {
     fn as_any(&self) -> &dyn Any {
         self
     }
-    fn schema(&self) -> DFSchemaRef {
+    fn schema(&self) -> SchemaRef {
         let schema = TEST_CUSTOM_SCHEMA_REF!();
         match &self.projection {
             None => schema,
@@ -111,8 +111,6 @@ impl ExecutionPlan for CustomExecutionPlan {
                 p.iter().map(|i| schema.field(*i).clone()).collect(),
             )),
         }
-        .to_dfschema_ref()
-        .unwrap()
     }
     fn output_partitioning(&self) -> Partitioning {
         Partitioning::UnknownPartitioning(1)

@@ -61,9 +61,7 @@ use crate::optimizer::filter_push_down::FilterPushDown;
 use crate::optimizer::limit_push_down::LimitPushDown;
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::projection_push_down::ProjectionPushDown;
-use crate::physical_optimizer::merge_exec::AddMergeExec;
 use crate::optimizer::simplify_expressions::SimplifyExpressions;
-use crate::physical_optimizer::coalesce_batches::CoalesceBatches;
 use crate::physical_optimizer::merge_exec::AddCoalescePartitionsExec;
 use crate::physical_optimizer::repartition::Repartition;
 
@@ -548,7 +546,7 @@ impl ExecutionContext {
                     let file = fs::File::create(path)?;
                     let mut writer = ArrowWriter::try_new(
                         file.try_clone().unwrap(),
-                        plan.schema().to_schema_ref(),
+                        plan.schema(),
                         writer_properties.clone(),
                     )?;
                     let stream = plan.execute(i).await?;
@@ -685,11 +683,11 @@ impl Default for ExecutionConfig {
             concurrency: num_cpus::get(),
             batch_size: 8192,
             optimizers: vec![
+                Arc::new(ProjectionPushDown::new()),
+                Arc::new(FilterPushDown::new()),
                 Arc::new(ConstantFolding::new()),
                 Arc::new(EliminateLimit::new()),
                 Arc::new(AggregateStatistics::new()),
-                Arc::new(ProjectionPushDown::new()),
-                Arc::new(FilterPushDown::new()),
                 Arc::new(SimplifyExpressions::new()),
                 Arc::new(HashBuildProbeOrder::new()),
                 Arc::new(LimitPushDown::new()),
@@ -1239,7 +1237,11 @@ mod tests {
 
         let plan = ctx.optimize(&plan)?;
         let physical_plan = ctx.create_physical_plan(&Arc::new(plan))?;
-        assert!(!physical_plan.schema().field_with_unqualified_name("c1")?.is_nullable());
+        assert!(!physical_plan
+            .schema()
+            .field_with_name("c1")
+            .unwrap()
+            .is_nullable());
         Ok(())
     }
 
@@ -3669,6 +3671,16 @@ mod tests {
             _input_schema: &Schema,
             _ctx_state: &ExecutionContextState,
         ) -> Result<Arc<dyn crate::physical_plan::PhysicalExpr>> {
+            unimplemented!()
+        }
+
+        fn create_aggregate_expr(
+            &self,
+            _expr: &Expr,
+            _input_dfschema: &crate::logical_plan::DFSchema,
+            _input_schema: &Schema,
+            _ctx_state: &ExecutionContextState,
+        ) -> Result<Arc<dyn crate::physical_plan::AggregateExpr>> {
             unimplemented!()
         }
     }

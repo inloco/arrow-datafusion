@@ -18,16 +18,17 @@
 //! Projection Push Down optimizer rule ensures that only referenced columns are
 //! loaded into memory
 
+use crate::cube_ext::alias::LogicalAlias;
 use crate::error::{DataFusionError, Result};
 use crate::execution::context::ExecutionProps;
 use crate::logical_plan::{
-    build_join_schema, Column, DFField, DFSchema, DFSchemaRef, LogicalPlan,
+    build_join_schema, Column, DFField, DFSchema, DFSchemaRef, Expr, LogicalPlan,
     LogicalPlanBuilder, ToDFSchema,
 };
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
 use crate::sql::utils::find_sort_exprs;
-use arrow::datatypes::{Field, Schema};
+use arrow::datatypes::Schema;
 use arrow::error::Result as ArrowResult;
 use std::{
     collections::{BTreeSet, HashSet},
@@ -334,7 +335,6 @@ fn optimize_plan(
             table_name,
             source,
             filters,
-            alias,
             limit,
             ..
         } => {
@@ -351,16 +351,17 @@ fn optimize_plan(
                 projection: Some(projection),
                 projected_schema,
                 filters: filters.clone(),
-                alias: alias.clone(),
                 limit: *limit,
             })
         }
         LogicalPlan::Explain { .. } => Err(DataFusionError::Internal(
             "Unsupported logical plan: Explain must be root of the plan".to_string(),
         )),
-        LogicalPlan::Union { inputs, .. } => {
+        LogicalPlan::Union { .. } => {
+            // UNION inputs will reference the same column with different identifiers, so we need
+            // to populate new_required_columns by unqualified column name based on required fields
+            // from the resulting UNION output
             let expr = plan.expressions();
-            let original_schema = inputs[0].schema();
             let inputs = plan.inputs();
             let new_inputs = inputs
                 .iter()
@@ -368,55 +369,14 @@ fn optimize_plan(
                     optimize_plan(
                         optimizer,
                         plan,
-                        &unalias_required_columns(original_schema, &new_required_columns),
-                        has_projection,
-                    )
-                })
-                .collect::<Result<Vec<_>>>()?;
-
-            utils::from_plan(plan, &expr, &new_inputs)
-        }
-        LogicalPlan::Union {
-            inputs,
-            schema,
-            alias,
-        } => {
-            // UNION inputs will reference the same column with different identifiers, so we need
-            // to populate new_required_columns by unqualified column name based on required fields
-            // from the resulting UNION output
-            let union_required_fields = schema
-                .fields()
-                .iter()
-                .filter(|f| new_required_columns.contains(&f.qualified_column()))
-                .map(|f| f.field())
-                .collect::<HashSet<&Field>>();
-
-            let new_inputs = inputs
-                .iter()
-                .map(|input_plan| {
-                    input_plan
-                        .schema()
-                        .fields()
-                        .iter()
-                        .filter(|f| union_required_fields.contains(f.field()))
-                        .for_each(|f| {
-                            new_required_columns.insert(f.qualified_column());
-                        });
-                    optimize_plan(
-                        optimizer,
-                        input_plan,
-                        &new_required_columns,
+                        &unalias_required_columns(plan.schema(), &new_required_columns),
                         has_projection,
                         execution_props,
                     )
                 })
                 .collect::<Result<Vec<_>>>()?;
 
-            Ok(LogicalPlan::Union {
-                inputs: new_inputs,
-                schema: schema.clone(),
-                alias: alias.clone(),
-            })
+            utils::from_plan(plan, &expr, &new_inputs)
         }
         // all other nodes: Add any additional columns used by
         // expressions in this node to the list of required columns
@@ -465,16 +425,32 @@ fn optimize_plan(
     }
 }
 
-fn unalias_required_columns(
+pub(crate) fn unalias_columns_in_expr(unaliased_schema: &DFSchema, e: &Expr) -> Expr {
+    if let Expr::Column(Column { relation: _, name }) = e {
+        let f = match unaliased_schema.field_with_unqualified_name(name) {
+            Err(_) => return e.clone(), // Resolve errors must be handled elsewhere.
+            Ok(f) => f,
+        };
+        return Expr::Column(f.qualified_column());
+    }
+
+    let mut cs = utils::expr_sub_expressions(e).unwrap();
+    for c in &mut cs {
+        *c = unalias_columns_in_expr(unaliased_schema, &c);
+    }
+    utils::rewrite_expression(e, &cs).unwrap()
+}
+
+pub(crate) fn unalias_required_columns(
     unaliased_schema: &DFSchema,
-    required_columns: &HashSet<String>,
-) -> HashSet<String> {
+    required_columns: &HashSet<Column>,
+) -> HashSet<Column> {
     // TODO: we only remove `alias` we are stripping into account.
     let mut stripped_columns = HashSet::new();
     for c in required_columns {
-        match unaliased_schema.field_with_unqualified_name(c.split('.').last().unwrap()) {
+        match unaliased_schema.field_with_unqualified_name(&c.name) {
             Ok(f) => {
-                stripped_columns.insert(f.qualified_name());
+                stripped_columns.insert(f.qualified_column());
             }
             Err(_) => continue,
         }
@@ -490,7 +466,7 @@ mod tests {
         col, exprlist_to_fields, lit, max, min, Expr, JoinType, LogicalPlanBuilder,
     };
     use crate::test::*;
-    use arrow::datatypes::DataType;
+    use arrow::datatypes::{DataType, Field};
 
     #[test]
     fn aggregate_no_group_by() -> Result<()> {
