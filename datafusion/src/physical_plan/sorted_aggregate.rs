@@ -108,6 +108,12 @@ impl SortedAggState {
                 key,
                 accumulators: create_accumulators(agg_exprs)?,
             });
+
+            // If this does not hold, the while below loops forever. Ensure we panic instead.
+            assert!(
+                agg_key_equals(&self.current_agg.as_ref().unwrap().key, key_columns, 0)?,
+                "grouping key not equal to its input"
+            );
         }
 
         let mut row_i = 0;
