@@ -241,9 +241,18 @@ pub fn eq_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<DataType>
         return Some(lhs_type.clone());
     }
     numerical_coercion(lhs_type, rhs_type)
+        .or_else(|| eq_bool_coercion(lhs_type, rhs_type))
         .or_else(|| dictionary_coercion(lhs_type, rhs_type))
         .or_else(|| temporal_coercion(lhs_type, rhs_type))
         .or_else(|| string_implicit_cast(lhs_type, rhs_type))
+}
+
+fn eq_bool_coercion(l: &DataType, r: &DataType) -> Option<DataType> {
+    if l == &DataType::Boolean || r == &DataType::Boolean {
+        Some(DataType::Boolean)
+    } else {
+        None
+    }
 }
 
 // coercion rules that assume an ordered set, such as "less than".

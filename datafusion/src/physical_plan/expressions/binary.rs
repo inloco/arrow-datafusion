@@ -50,6 +50,7 @@ use crate::scalar::ScalarValue;
 
 use super::coercion::{eq_coercion, numerical_coercion, order_coercion, string_coercion};
 use crate::physical_plan::expressions::coercion::{is_numeric, string_implicit_cast};
+use arrow::compute::{eq_bool, neq_bool};
 
 /// Binary expression
 #[derive(Debug)]
@@ -658,6 +659,28 @@ impl PhysicalExpr for BinaryExpr {
             left_value.into_array(batch.num_rows()),
             right_value.into_array(batch.num_rows()),
         );
+
+        // Handle boolean comparisons.
+        if left.data_type() == &DataType::Boolean {
+            let boolean_eq = |is_eq: bool| {
+                let left = left.as_any().downcast_ref::<BooleanArray>().unwrap();
+                let right = right.as_any().downcast_ref::<BooleanArray>().unwrap();
+                if is_eq {
+                    eq_bool(left, right)
+                } else {
+                    neq_bool(left, right)
+                }
+            };
+            match self.op {
+                Operator::Eq => {
+                    return Ok(ColumnarValue::Array(Arc::new(boolean_eq(true)?)))
+                }
+                Operator::NotEq => {
+                    return Ok(ColumnarValue::Array(Arc::new(boolean_eq(false)?)))
+                }
+                _ => {}
+            }
+        }
 
         let result: Result<ArrayRef> = match &self.op {
             Operator::Like => binary_string_array_op!(left, right, like),
