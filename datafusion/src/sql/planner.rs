@@ -24,7 +24,9 @@ use std::{convert::TryInto, vec};
 
 use crate::catalog::TableReference;
 use crate::datasource::TableProvider;
-use crate::logical_plan::window_frames::{WindowFrame, WindowFrameUnits};
+use crate::logical_plan::window_frames::{
+    check_window_bound_order, WindowFrame, WindowFrameUnits,
+};
 use crate::logical_plan::Expr::Alias;
 use crate::logical_plan::{
     and, builder::expand_wildcard, col, lit, normalize_col, union_with_alias, Column,
@@ -65,6 +67,7 @@ use super::{
 };
 use crate::cube_ext::alias::LogicalAlias;
 use crate::cube_ext::join::contains_table_scan;
+use crate::sql::utils::find_rolling_aggregate_exprs;
 
 /// The ContextProvider trait allows the query planner to obtain meta-data about tables and
 /// functions referenced in SQL statements
@@ -732,6 +735,75 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             self.window(plan, window_func_exprs)?
         };
 
+        // CubeStore extension: rolling window
+        let rolling_aggs = find_rolling_aggregate_exprs(&select_exprs_post_aggr);
+        let (plan, select_exprs_post_aggr) = match &select.rolling_window {
+            None => {
+                if !rolling_aggs.is_empty() {
+                    return Err(DataFusionError::Plan(
+                        "Rolling window aggregates without ROLLING_WINDOW".to_string(),
+                    ));
+                }
+                (plan, select_exprs_post_aggr)
+            }
+            Some(rolling_window) => {
+                if !select.group_by.is_empty() {
+                    return Err(DataFusionError::Plan(
+                        "GROUP BY and ROLLING_WINDOW are not allowed in the same query"
+                            .to_string(),
+                    ));
+                }
+                if rolling_aggs.is_empty() {
+                    return Err(DataFusionError::Plan(
+                        "ROLLING_WINDOW without ROLLING() aggregates".to_string(),
+                    ));
+                }
+                let schema = plan.schema();
+                let make_column = |name: &ObjectName, kind| {
+                    let e = match &name.0.as_slice() {
+                        &[id] => SQLExpr::Identifier(id.clone()),
+                        multi => SQLExpr::CompoundIdentifier(multi.to_vec()),
+                    };
+                    match self.sql_to_rex(&e, &schema)? {
+                        Expr::Column(c) => return Ok(c),
+                        _ => {
+                            return Err(DataFusionError::Plan(format!(
+                                "{} '{}' is not a column",
+                                kind, name
+                            )))
+                        }
+                    };
+                };
+                let dimension = make_column(
+                    &rolling_window.dimension,
+                    "DIMENSION inside rolling window",
+                )?;
+                let partition_by = rolling_window
+                    .partition_by
+                    .iter()
+                    .map(|c| make_column(c, "PARTITION BY item inside rolling window"))
+                    .collect::<Result<Vec<_>>>()?;
+                let from = self.sql_to_rex(&rolling_window.from, &schema)?;
+                let to = self.sql_to_rex(&rolling_window.to, &schema)?;
+                let every = self.sql_to_rex(&rolling_window.every, &schema)?;
+                let select_exprs_post_aggr = select_exprs_post_aggr
+                    .iter()
+                    .map(|expr| rebase_expr(expr, &rolling_aggs, &plan))
+                    .collect::<Result<Vec<Expr>>>()?;
+                let plan = LogicalPlanBuilder::from(plan)
+                    .rolling_window_aggregate(
+                        dimension,
+                        from,
+                        to,
+                        every,
+                        rolling_aggs,
+                        partition_by,
+                    )?
+                    .build()?;
+                (plan, select_exprs_post_aggr)
+            }
+        };
+
         let plan = if select.distinct {
             return LogicalPlanBuilder::from(plan)
                 .aggregate(select_exprs_post_aggr, vec![])?
@@ -1386,6 +1458,37 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             }
 
             SQLExpr::Nested(e) => self.sql_expr_to_logical_expr(e, schema),
+
+            SQLExpr::Rolling {
+                agg,
+                first_bound,
+                second_bound,
+            } => {
+                let agg = match self.sql_expr_to_logical_expr(&agg, schema)? {
+                    e @ Expr::AggregateFunction { .. }
+                    | e @ Expr::AggregateUDF { .. } => e,
+                    _ => {
+                        return Err(DataFusionError::Plan(format!(
+                            "ROLLING expects aggregate input, got {}",
+                            agg
+                        )))
+                    }
+                };
+
+                let start = first_bound.clone().into();
+                let end = second_bound
+                    .clone()
+                    .unwrap_or(sqlparser::ast::WindowFrameBound::CurrentRow)
+                    .into();
+
+                check_window_bound_order(start, end)?;
+
+                Ok(Expr::RollingAggregate {
+                    agg: Box::new(agg),
+                    start,
+                    end,
+                })
+            }
 
             _ => Err(DataFusionError::NotImplemented(format!(
                 "Unsupported ast node {:?} in sqltorel",

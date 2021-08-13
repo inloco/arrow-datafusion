@@ -36,7 +36,7 @@ use super::{RecordBatchStream, SendableRecordBatchStream};
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{ExecutionPlan, OptimizerHints, Partitioning};
 
-use crate::cube_ext::util::cmp_array_row_same_types;
+use crate::cube_ext::util::{cmp_array_row_same_types, lexcmp_array_rows};
 use crate::physical_plan::expressions::Column;
 use crate::physical_plan::memory::MemoryStream;
 use arrow::array::{make_array, MutableArrayData};
@@ -543,20 +543,6 @@ fn merge_sort(
         pos,
         RecordBatch::try_new(batches[0].1.schema(), result_cols)?,
     ))
-}
-
-fn lexcmp_array_rows<'a>(
-    cols: impl Iterator<Item = &'a ArrayRef>,
-    l_row: usize,
-    r_row: usize,
-) -> Ordering {
-    for c in cols {
-        let o = cmp_array_row_same_types(c, l_row, c, r_row);
-        if o != Ordering::Equal {
-            return o;
-        }
-    }
-    Ordering::Equal
 }
 
 impl RecordBatchStream for MergeSortStream {

@@ -257,6 +257,7 @@ impl Default for DefaultPhysicalPlanner {
                 Arc::new(LogicalAliasPlanner {}),
                 Arc::new(CrossJoinPlanner {}),
                 Arc::new(CrossJoinAggPlanner {}),
+                Arc::new(crate::cube_ext::rolling::Planner {}),
             ],
         }
     }
@@ -330,6 +331,7 @@ impl DefaultPhysicalPlanner {
         extension_planners.insert(0, Arc::new(LogicalAliasPlanner {}));
         extension_planners.insert(1, Arc::new(CrossJoinPlanner {}));
         extension_planners.insert(2, Arc::new(CrossJoinAggPlanner {}));
+        extension_planners.insert(3, Arc::new(crate::cube_ext::rolling::Planner {}));
         Self { extension_planners }
     }
 

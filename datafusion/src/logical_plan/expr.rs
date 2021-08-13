@@ -349,6 +349,15 @@ pub enum Expr {
         /// List of expressions to feed to the functions as arguments
         args: Vec<Expr>,
     },
+    /// CubeStore extension.
+    RollingAggregate {
+        /// Always either an AggregateFunction or AggregateUDF.
+        agg: Box<Expr>,
+        /// Start
+        start: window_frames::WindowFrameBound,
+        /// End
+        end: window_frames::WindowFrameBound,
+    },
     /// Returns whether the list contains the expr value.
     InList {
         /// The expression to compare
@@ -430,6 +439,7 @@ impl Expr {
             Expr::Sort { ref expr, .. } => expr.get_type(schema),
             Expr::Between { .. } => Ok(DataType::Boolean),
             Expr::InList { .. } => Ok(DataType::Boolean),
+            Expr::RollingAggregate { agg, .. } => agg.get_type(schema),
             Expr::Wildcard => Err(DataFusionError::Internal(
                 "Wildcard expressions are not valid in a logical query plan".to_owned(),
             )),
@@ -473,6 +483,7 @@ impl Expr {
             Expr::WindowFunction { .. } => Ok(true),
             Expr::AggregateFunction { .. } => Ok(true),
             Expr::AggregateUDF { .. } => Ok(true),
+            Expr::RollingAggregate { .. } => Ok(true),
             Expr::Not(expr) => expr.nullable(input_schema),
             Expr::Negative(expr) => expr.nullable(input_schema),
             Expr::IsNull(_) => Ok(false),
@@ -757,6 +768,7 @@ impl Expr {
             Expr::AggregateUDF { args, .. } => args
                 .iter()
                 .try_fold(visitor, |visitor, arg| arg.accept(visitor)),
+            Expr::RollingAggregate { agg, .. } => agg.accept(visitor),
             Expr::InList { expr, list, .. } => {
                 let visitor = expr.accept(visitor)?;
                 list.iter()
@@ -918,6 +930,15 @@ impl Expr {
                 expr: rewrite_boxed(expr, rewriter)?,
                 list,
                 negated,
+            },
+            Expr::RollingAggregate {
+                agg,
+                start: start_bound,
+                end: end_bound,
+            } => Expr::RollingAggregate {
+                agg: rewrite_boxed(agg, rewriter)?,
+                start: start_bound,
+                end: end_bound,
             },
             Expr::Wildcard => Expr::Wildcard,
         };
@@ -1644,6 +1665,15 @@ impl fmt::Debug for Expr {
                     write!(f, "{:?} BETWEEN {:?} AND {:?}", expr, low, high)
                 }
             }
+            Expr::RollingAggregate {
+                agg,
+                start: start_bound,
+                end: end_bound,
+            } => {
+                write!(f, "ROLLING({:?} RANGE", agg)?;
+                write!(f, " BETWEEN {} AND {}", start_bound, end_bound)?;
+                write!(f, ")")
+            }
             Expr::InList {
                 expr,
                 list,
@@ -1775,6 +1805,12 @@ fn create_name(e: &Expr, input_schema: &DFSchema) -> Result<String> {
             }
             Ok(format!("{}({})", fun.name, names.join(",")))
         }
+        Expr::RollingAggregate { agg, start, end } => Ok(format!(
+            "ROLLING({} RANGE BETWEEN {} AND {})",
+            create_name(agg, input_schema)?,
+            start,
+            end
+        )),
         Expr::InList {
             expr,
             list,

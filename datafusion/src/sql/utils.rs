@@ -29,11 +29,22 @@ use std::collections::HashMap;
 /// `Expr::AggregateUDF`. They are returned in order of occurrence (depth
 /// first), with duplicates omitted.
 pub(crate) fn find_aggregate_exprs(exprs: &[Expr]) -> Vec<Expr> {
-    find_exprs_in_exprs(exprs, &|nested_expr| {
+    // RollingAggregate contain aggregate exprs, but are handled separately.
+    let mut exprs = find_exprs_in_exprs(exprs, &|nested_expr| {
         matches!(
             nested_expr,
-            Expr::AggregateFunction { .. } | Expr::AggregateUDF { .. }
+            Expr::AggregateFunction { .. }
+                | Expr::AggregateUDF { .. }
+                | Expr::RollingAggregate { .. }
         )
+    });
+    exprs.retain(|e| !matches!(e, Expr::RollingAggregate { .. }));
+    exprs
+}
+
+pub(crate) fn find_rolling_aggregate_exprs(exprs: &[Expr]) -> Vec<Expr> {
+    find_exprs_in_exprs(exprs, &|nested_expr| {
+        matches!(nested_expr, Expr::RollingAggregate { .. })
     })
 }
 
@@ -57,6 +68,12 @@ pub(crate) fn find_window_exprs(exprs: &[Expr]) -> Vec<Expr> {
 /// appearance (depth first), with duplicates omitted.
 pub(crate) fn find_column_exprs(exprs: &[Expr]) -> Vec<Expr> {
     find_exprs_in_exprs(exprs, &|nested_expr| matches!(nested_expr, Expr::Column(_)))
+}
+
+/// Collect all deeply nested `Expr::Column`'s. They are returned in order of
+/// appearance (depth first), with duplicates omitted.
+pub(crate) fn find_columns(e: &Expr) -> Vec<Expr> {
+    find_exprs_in_expr(e, &|nested_expr| matches!(nested_expr, Expr::Column(_)))
 }
 
 /// Search the provided `Expr`'s, and all of their nested `Expr`, for any that
@@ -367,6 +384,15 @@ where
             Expr::Column { .. } | Expr::Literal(_) | Expr::ScalarVariable(_) => {
                 Ok(expr.clone())
             }
+            Expr::RollingAggregate {
+                agg,
+                start: start_bound,
+                end: end_bound,
+            } => Ok(Expr::RollingAggregate {
+                agg: Box::new(clone_with_replacement(agg, replacement_fn)?),
+                start: start_bound.clone(),
+                end: end_bound.clone(),
+            }),
             Expr::Wildcard => Ok(Expr::Wildcard),
         },
     }

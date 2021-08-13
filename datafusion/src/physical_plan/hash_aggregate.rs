@@ -1203,7 +1203,7 @@ pub fn create_accumulators(
 }
 
 #[allow(unused_variables)]
-fn create_builder(s: &ScalarValue) -> Box<dyn ArrayBuilder> {
+pub(crate) fn create_builder(s: &ScalarValue) -> Box<dyn ArrayBuilder> {
     macro_rules! create_list_builder {
         ($v: expr, $inner_data_type: expr, ListBuilder $(, $rest: tt)*) => {{
             panic!("nested lists not supported")
@@ -1226,7 +1226,7 @@ fn create_builder(s: &ScalarValue) -> Box<dyn ArrayBuilder> {
 }
 
 #[allow(unused_variables)]
-fn append_value(b: &mut dyn ArrayBuilder, v: &ScalarValue) -> Result<()> {
+pub(crate) fn append_value(b: &mut dyn ArrayBuilder, v: &ScalarValue) -> Result<()> {
     let b = b.as_any_mut();
     macro_rules! append_list_value {
         ($list: expr, $dummy: expr, $inner_data_type: expr, ListBuilder $(, $rest: tt)*) => {{

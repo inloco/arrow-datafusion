@@ -78,6 +78,7 @@ impl ExpressionVisitor for ColumnNameVisitor<'_> {
             Expr::WindowFunction { .. } => {}
             Expr::AggregateFunction { .. } => {}
             Expr::AggregateUDF { .. } => {}
+            Expr::RollingAggregate { .. } => {}
             Expr::InList { .. } => {}
             Expr::Wildcard => {}
         }
@@ -281,6 +282,7 @@ pub fn expr_sub_expressions(expr: &Expr) -> Result<Vec<Expr>> {
             }
             Ok(expr_list)
         }
+        Expr::RollingAggregate { agg, .. } => Ok(vec![agg.as_ref().to_owned()]),
         Expr::Wildcard { .. } => Err(DataFusionError::Internal(
             "Wildcard expressions are not valid in a logical query plan".to_owned(),
         )),
@@ -440,6 +442,15 @@ pub fn rewrite_expression(expr: &Expr, expressions: &[Expr]) -> Result<Expr> {
             }
         }
         Expr::InList { .. } => Ok(expr.clone()),
+        Expr::RollingAggregate {
+            start: start_bound,
+            end: end_bound,
+            ..
+        } => Ok(Expr::RollingAggregate {
+            agg: Box::new(expressions[0].clone()),
+            start: start_bound.clone(),
+            end: end_bound.clone(),
+        }),
         Expr::Wildcard { .. } => Err(DataFusionError::Internal(
             "Wildcard expressions are not valid in a logical query plan".to_owned(),
         )),

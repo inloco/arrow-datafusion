@@ -37,10 +37,13 @@ use crate::{
 use super::dfschema::ToDFSchema;
 use super::{exprlist_to_fields, Expr, JoinConstraint, JoinType, LogicalPlan, PlanType};
 use crate::cube_ext::join::SkewedLeftCrossJoin;
+use crate::cube_ext::rolling::RollingWindowAggregate;
 use crate::logical_plan::{
     columnize_expr, normalize_col, normalize_cols, Column, DFField, DFSchema,
     DFSchemaRef, Partitioning,
 };
+use crate::sql::utils::find_columns;
+use arrow::datatypes::DataType;
 
 /// Default table name for unnamed table
 pub const UNNAMED_TABLE: &str = "?table?";
@@ -427,6 +430,77 @@ impl LogicalPlanBuilder {
             aggr_expr,
             schema: DFSchemaRef::new(aggr_schema),
         }))
+    }
+
+    /// Apply the rolling window aggregation function.
+    pub fn rolling_window_aggregate(
+        &self,
+        dimension: Column,
+        from: Expr,
+        to: Expr,
+        every: Expr,
+        rolling_aggs: Vec<Expr>,
+        mut partition_by: Vec<Column>,
+    ) -> Result<Self> {
+        // TODO: it's confusing we're looking at post-aggregation schema here.
+        let dimension = dimension.normalize(&self.plan)?;
+        for c in &mut partition_by {
+            *c = std::mem::replace(c, Column::from_name("")).normalize(&self.plan)?;
+        }
+        let rolling_aggs = normalize_cols(rolling_aggs, &self.plan)?;
+
+        if !find_columns(&from).is_empty() {
+            return Err(DataFusionError::Plan(
+                "FROM inside ROLLING_WINDOW cannot reference columns".to_string(),
+            ));
+        }
+        if !find_columns(&to).is_empty() {
+            return Err(DataFusionError::Plan(
+                "TO inside ROLLING_WINDOW cannot reference columns".to_string(),
+            ));
+        }
+        if !find_columns(&every).is_empty() {
+            return Err(DataFusionError::Plan(
+                "EVERY inside ROLLING_WINDOW cannot reference columns".to_string(),
+            ));
+        }
+
+        let schema = self.plan.schema();
+        match (
+            from.get_type(schema)?,
+            to.get_type(schema)?,
+            every.get_type(schema)?,
+        ) {
+            (DataType::Int64, DataType::Int64, DataType::Int64) => {} // ok
+            (f, t, e) => {
+                return Err(DataFusionError::Plan(format!(
+                "FROM, TO and EVERY inside ROLLING_WINDOW must be Int64, got: {}, {}, {}",
+                f, t, e
+            )))
+            }
+        }
+
+        // TODO: take other fields from input into account.
+        validate_unique_names("Rolling window", &rolling_aggs, self.plan.schema())?;
+
+        let input_schema = self.plan.schema();
+        let schema = Arc::new(input_schema.join(&DFSchema::new(exprlist_to_fields(
+            &rolling_aggs,
+            input_schema,
+        )?)?)?);
+        let p = LogicalPlan::Extension {
+            node: Arc::new(RollingWindowAggregate {
+                schema,
+                input: self.plan.clone(),
+                dimension,
+                from,
+                to,
+                every,
+                partition_by,
+                rolling_aggs,
+            }),
+        };
+        Ok(LogicalPlanBuilder::from(p))
     }
 
     /// Create an expression to represent the explanation of the plan

@@ -356,3 +356,17 @@ pub fn cmp_array_row_same_types(
 
     cube_match_array!(l, cmp_row);
 }
+
+pub fn lexcmp_array_rows<'a>(
+    cols: impl Iterator<Item = &'a ArrayRef>,
+    l_row: usize,
+    r_row: usize,
+) -> Ordering {
+    for c in cols {
+        let o = cmp_array_row_same_types(c, l_row, c, r_row);
+        if o != Ordering::Equal {
+            return o;
+        }
+    }
+    Ordering::Equal
+}

@@ -24,6 +24,7 @@
 //! - An EXCLUDE clause.
 
 use crate::error::{DataFusionError, Result};
+use serde_derive::{Deserialize, Serialize};
 use sqlparser::ast;
 use std::cmp::Ordering;
 use std::convert::{From, TryFrom};
@@ -64,46 +65,53 @@ impl TryFrom<ast::WindowFrame> for WindowFrame {
             .end_bound
             .map(WindowFrameBound::from)
             .unwrap_or(WindowFrameBound::CurrentRow);
+        check_window_bound_order(start_bound, end_bound)?;
 
-        if let WindowFrameBound::Following(None) = start_bound {
-            Err(DataFusionError::Execution(
-                "Invalid window frame: start bound cannot be unbounded following"
-                    .to_owned(),
-            ))
-        } else if let WindowFrameBound::Preceding(None) = end_bound {
-            Err(DataFusionError::Execution(
-                "Invalid window frame: end bound cannot be unbounded preceding"
-                    .to_owned(),
-            ))
-        } else if start_bound > end_bound {
-            Err(DataFusionError::Execution(format!(
+        let units = value.units.into();
+        if units == WindowFrameUnits::Range {
+            for bound in &[start_bound, end_bound] {
+                match bound {
+                    WindowFrameBound::Preceding(Some(v))
+                    | WindowFrameBound::Following(Some(v))
+                        if *v > 0 =>
+                    {
+                        Err(DataFusionError::NotImplemented(format!(
+                            "With WindowFrameUnits={}, the bound cannot be {} PRECEDING or FOLLOWING at the moment",
+                            units, v
+                        )))
+                    }
+                    _ => Ok(()),
+                }?;
+            }
+        }
+        Ok(Self {
+            units,
+            start_bound,
+            end_bound,
+        })
+    }
+}
+
+#[allow(missing_docs)]
+pub fn check_window_bound_order(
+    start_bound: WindowFrameBound,
+    end_bound: WindowFrameBound,
+) -> Result<()> {
+    if let WindowFrameBound::Following(None) = start_bound {
+        Err(DataFusionError::Execution(
+            "Invalid window frame: start bound cannot be unbounded following".to_owned(),
+        ))
+    } else if let WindowFrameBound::Preceding(None) = end_bound {
+        Err(DataFusionError::Execution(
+            "Invalid window frame: end bound cannot be unbounded preceding".to_owned(),
+        ))
+    } else if start_bound > end_bound {
+        Err(DataFusionError::Execution(format!(
             "Invalid window frame: start bound ({}) cannot be larger than end bound ({})",
             start_bound, end_bound
         )))
-        } else {
-            let units = value.units.into();
-            if units == WindowFrameUnits::Range {
-                for bound in &[start_bound, end_bound] {
-                    match bound {
-                        WindowFrameBound::Preceding(Some(v))
-                        | WindowFrameBound::Following(Some(v))
-                            if *v > 0 =>
-                        {
-                            Err(DataFusionError::NotImplemented(format!(
-                                "With WindowFrameUnits={}, the bound cannot be {} PRECEDING or FOLLOWING at the moment",
-                                units, v
-                            )))
-                        }
-                        _ => Ok(()),
-                    }?;
-                }
-            }
-            Ok(Self {
-                units,
-                start_bound,
-                end_bound,
-            })
-        }
+    } else {
+        Ok(())
     }
 }
 
@@ -126,7 +134,7 @@ impl Default for WindowFrame {
 /// 5. UNBOUNDED FOLLOWING
 ///
 /// in this implementation we'll only allow <expr> to be u64 (i.e. no dynamic boundary)
-#[derive(Debug, Clone, Copy, Eq)]
+#[derive(Debug, Clone, Copy, Eq, Serialize, Deserialize)]
 pub enum WindowFrameBound {
     /// 1. UNBOUNDED PRECEDING
     /// The frame boundary is the first row in the partition.

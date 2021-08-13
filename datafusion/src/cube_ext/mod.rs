@@ -18,6 +18,7 @@
 pub mod alias;
 pub mod join;
 pub mod joinagg;
+pub mod rolling;
 pub mod sequence;
 pub mod stream;
 pub mod util;
