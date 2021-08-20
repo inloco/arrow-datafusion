@@ -43,7 +43,7 @@ use crate::logical_plan::{
     DFSchemaRef, Partitioning,
 };
 use crate::sql::utils::find_columns;
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, TimeUnit};
 
 /// Default table name for unnamed table
 pub const UNNAMED_TABLE: &str = "?table?";
@@ -466,15 +466,17 @@ impl LogicalPlanBuilder {
         }
 
         let schema = self.plan.schema();
+        let from_type = from.get_type(schema)?;
         match (
-            from.get_type(schema)?,
+            &from_type,
             to.get_type(schema)?,
             every.get_type(schema)?,
         ) {
             (DataType::Int64, DataType::Int64, DataType::Int64) => {} // ok
+            (DataType::Timestamp(TimeUnit::Nanosecond, None), DataType::Timestamp(TimeUnit::Nanosecond, None), DataType::Interval(_)) => {} // ok
             (f, t, e) => {
                 return Err(DataFusionError::Plan(format!(
-                "FROM, TO and EVERY inside ROLLING_WINDOW must be Int64, got: {}, {}, {}",
+                "FROM, TO and EVERY inside ROLLING_WINDOW must be either int64 or nanosecond timestamp and interval, got: {}, {}, {}",
                 f, t, e
             )))
             }
@@ -483,11 +485,14 @@ impl LogicalPlanBuilder {
         // TODO: take other fields from input into account.
         validate_unique_names("Rolling window", &rolling_aggs, self.plan.schema())?;
 
-        let input_schema = self.plan.schema();
-        let schema = Arc::new(input_schema.join(&DFSchema::new(exprlist_to_fields(
+        // Compute schema.
+        let schema = build_rolling_aggregate_schema(
+            self.plan.schema().as_ref(),
+            &dimension,
+            from_type,
+            &partition_by,
             &rolling_aggs,
-            input_schema,
-        )?)?)?);
+        )?;
         let p = LogicalPlan::Extension {
             node: Arc::new(RollingWindowAggregate {
                 schema,
@@ -522,6 +527,51 @@ impl LogicalPlanBuilder {
     pub fn build(&self) -> Result<LogicalPlan> {
         Ok(self.plan.clone())
     }
+}
+
+fn build_rolling_aggregate_schema(
+    input_schema: &DFSchema,
+    dimension: &Column,
+    dimension_type: DataType,
+    partition_by: &[Column],
+    rolling_aggs: &[Expr],
+) -> Result<DFSchemaRef> {
+    let mut fields = Vec::with_capacity(input_schema.fields().len() + rolling_aggs.len());
+
+    // Dimension column.
+    let dim_col_i = input_schema.index_of_column(dimension)?;
+    let dim_col = input_schema.field(dim_col_i);
+    if dim_col.data_type() == &dimension_type {
+        fields.push(dim_col.clone());
+    } else {
+        fields.push(DFField::new(
+            dim_col.qualifier().map(|s| s.as_str()),
+            dim_col.name().as_str(),
+            dimension_type,
+            dim_col.is_nullable(),
+        ));
+    }
+
+    // Followed by the partition keys.
+    let mut partition_col_i = Vec::new();
+    for p in partition_by {
+        let p = input_schema.index_of_column(p)?;
+        partition_col_i.push(p);
+        fields.push(input_schema.field(p).clone());
+    }
+
+    // Followed by other columns.
+    for (i, f) in input_schema.fields().iter().enumerate() {
+        if i == dim_col_i || partition_col_i.contains(&i) {
+            continue;
+        }
+        fields.push(f.clone());
+    }
+
+    // Followed by the rolling window aggregation results.
+    fields.extend(exprlist_to_fields(rolling_aggs.iter(), input_schema)?);
+
+    Ok(Arc::new(DFSchema::new(fields)?))
 }
 
 /// Creates a schema for a join operation.

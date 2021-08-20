@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::cube_ext::datetime::date_addsub_scalar;
 use crate::cube_ext::stream::StreamWithSchema;
 use crate::cube_ext::util::{cmp_same_types, lexcmp_array_rows};
 use crate::error::DataFusionError;
@@ -35,13 +36,13 @@ use crate::physical_plan::{
 use crate::scalar::ScalarValue;
 use arrow::array::{make_array, BooleanBuilder, MutableArrayData};
 use arrow::compute::filter;
-use arrow::datatypes::{Schema, SchemaRef};
+use arrow::datatypes::{DataType, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
+use chrono::{TimeZone, Utc};
 use itertools::Itertools;
 use std::any::Any;
 use std::cmp::{max, Ordering};
-use std::convert::TryInto;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -147,6 +148,12 @@ impl ExtensionPlanner for Planner {
         let input_dfschema = node.input.schema().as_ref();
         let input_schema = input.schema();
 
+        let phys_col = |c: &logical_plan::Column| -> Result<_, DataFusionError> {
+            Ok(Column::new(&c.name, input_dfschema.index_of_column(c)?))
+        };
+        let dimension = phys_col(&node.dimension)?;
+        let dimension_type = input_schema.field(dimension.index()).data_type();
+
         let empty_batch = RecordBatch::new_empty(Arc::new(Schema::new(vec![])));
         let from = planner.create_physical_expr(
             &node.from,
@@ -185,24 +192,8 @@ impl ExtensionPlanner for Planner {
             .map(|e| -> Result<_, DataFusionError> {
                 match e {
                     Expr::RollingAggregate { agg, start, end } => {
-                        let start = match start {
-                            WindowFrameBound::Preceding(v) => {
-                                ScalarValue::Int64(convert_bound(*v)?)
-                            }
-                            WindowFrameBound::CurrentRow => ScalarValue::Int64(Some(0)),
-                            WindowFrameBound::Following(_) => {
-                                panic!("unexpected FOLLOWING bound")
-                            }
-                        };
-                        let end = match end {
-                            WindowFrameBound::Following(v) => {
-                                ScalarValue::Int64(convert_bound(*v)?)
-                            }
-                            WindowFrameBound::CurrentRow => ScalarValue::Int64(Some(0)),
-                            WindowFrameBound::Preceding(_) => {
-                                panic!("unexpected PRECEDING bound")
-                            }
-                        };
+                        let start = frame_bound_to_diff(start, dimension_type)?;
+                        let end = frame_bound_to_diff(end, dimension_type)?;
                         let agg = planner.create_aggregate_expr(
                             agg,
                             input_dfschema,
@@ -211,8 +202,8 @@ impl ExtensionPlanner for Planner {
                         )?;
                         Ok(RollingAgg {
                             agg,
-                            preceding: Some(start),
-                            following: Some(end),
+                            lower_bound: start,
+                            upper_bound: end,
                         })
                     }
                     _ => panic!("expected ROLLING() aggregate, got {:?}", e),
@@ -220,10 +211,6 @@ impl ExtensionPlanner for Planner {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let phys_col = |c: &logical_plan::Column| -> Result<_, DataFusionError> {
-            Ok(Column::new(&c.name, input_dfschema.index_of_column(c)?))
-        };
-        let dimension = phys_col(&node.dimension)?;
         // TODO: filter inputs by date.
         // Do preliminary sorting.
         let mut sort_key = Vec::with_capacity(input_schema.fields().len());
@@ -257,27 +244,49 @@ impl ExtensionPlanner for Planner {
     }
 }
 
-fn convert_bound(v: Option<u64>) -> Result<Option<i64>, DataFusionError> {
-    let v = match v {
-        None => return Ok(None),
-        Some(v) => v,
-    };
-    let s = match v.try_into() {
-        Err(_) => {
-            return Err(DataFusionError::Plan(format!(
-            "rolling window frame bound {} is too large, must be convertible to Int64",
-            v
-        )))
+fn frame_bound_to_diff(
+    b: &WindowFrameBound,
+    dimension: &DataType,
+) -> Result<Option<ScalarValue>, DataFusionError> {
+    match b {
+        WindowFrameBound::CurrentRow => match dimension {
+            DataType::Int64 => Ok(Some(ScalarValue::Int64(Some(0)))),
+            DataType::Timestamp(_, _) => Ok(Some(ScalarValue::IntervalDayTime(Some(0)))),
+            _ => Err(DataFusionError::Plan(format!(
+                "unsupported type for window frame bound {}",
+                dimension
+            ))),
+        },
+        // Planner checks UNBOUNDED PRECEDING/FOLLOWING are not used for end/start bound.
+        WindowFrameBound::Preceding(None) => Ok(None),
+        WindowFrameBound::Following(None) => Ok(None),
+
+        WindowFrameBound::Following(Some(v)) => Ok(Some(v.clone())),
+        WindowFrameBound::Preceding(Some(v)) => {
+            let mut v = v.clone();
+            // Note this is probably the only place that can produce negative intervals!
+            match &mut v {
+                ScalarValue::Int64(Some(i)) => *i = -*i,
+                ScalarValue::IntervalYearMonth(Some(i)) => *i = -*i,
+                ScalarValue::IntervalDayTime(Some(i)) => *i = -*i,
+                v => {
+                    return Err(DataFusionError::Internal(format!(
+                        "unexpected window frame bound value {}",
+                        v
+                    )))
+                }
+            }
+            Ok(Some(v))
         }
-        Ok(s) => s,
-    };
-    Ok(Some(s))
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct RollingAgg {
-    pub preceding: Option<ScalarValue>,
-    pub following: Option<ScalarValue>,
+    /// The bound is inclusive.
+    pub lower_bound: Option<ScalarValue>,
+    /// The bound is inclusive.
+    pub upper_bound: Option<ScalarValue>,
     pub agg: Arc<dyn AggregateExpr>,
 }
 
@@ -380,7 +389,12 @@ impl ExecutionPlan for RollingWindowAggExec {
             .iter()
             .map(|r| r.agg.create_accumulator())
             .collect::<Result<Vec<_>, _>>()?;
-        let dimension = input.column(self.dimension.index());
+        let mut dimension = input.column(self.dimension.index()).clone();
+        let dim_iter_type = self.from.get_datatype();
+        if dimension.data_type() != &dim_iter_type {
+            // This is to upcast timestamps to nanosecond precision.
+            dimension = arrow::compute::cast(&dimension, &dim_iter_type)?;
+        }
 
         let mut out_dim = create_builder(&self.from);
         let mut out_keys = key_cols
@@ -417,21 +431,21 @@ impl ExecutionPlan for RollingWindowAggExec {
                 let mut d_iter = 0;
                 while cmp_same_types(&d, &self.to, true, true) <= Ordering::Equal {
                     while window_start < group_end
-                        && !meets_preceding(
-                            &ScalarValue::try_from_array(dimension, window_start)
+                        && !meets_lower_bound(
+                            &ScalarValue::try_from_array(&dimension, window_start)
                                 .unwrap(),
                             &d,
-                            r.preceding.as_ref(),
+                            r.lower_bound.as_ref(),
                         )
                     {
                         window_start += 1;
                     }
                     window_end = max(window_end, window_start);
                     while window_end < group_end
-                        && meets_following(
-                            &ScalarValue::try_from_array(dimension, window_end).unwrap(),
+                        && meets_upper_bound(
+                            &ScalarValue::try_from_array(&dimension, window_end).unwrap(),
                             &d,
-                            r.following.as_ref(),
+                            r.upper_bound.as_ref(),
                         )
                     {
                         window_end += 1;
@@ -498,8 +512,11 @@ impl ExecutionPlan for RollingWindowAggExec {
                 // Find the matching row to add other columns.
                 while matching_row_lower_bound < group_end
                     && cmp_same_types(
-                        &ScalarValue::try_from_array(dimension, matching_row_lower_bound)
-                            .unwrap(),
+                        &ScalarValue::try_from_array(
+                            &dimension,
+                            matching_row_lower_bound,
+                        )
+                        .unwrap(),
                         &d,
                         true,
                         true,
@@ -508,7 +525,7 @@ impl ExecutionPlan for RollingWindowAggExec {
                     matching_row_lower_bound += 1;
                 }
                 if matching_row_lower_bound < group_end
-                    && ScalarValue::try_from_array(dimension, matching_row_lower_bound)
+                    && ScalarValue::try_from_array(&dimension, matching_row_lower_bound)
                         .unwrap()
                         == d
                 {
@@ -590,47 +607,96 @@ fn add_dim(l: &ScalarValue, r: &ScalarValue) -> ScalarValue {
         (ScalarValue::Int64(Some(l)), ScalarValue::Int64(Some(r))) => {
             ScalarValue::Int64(Some(l + r))
         }
+        (
+            ScalarValue::TimestampNanosecond(Some(l)),
+            i
+            @
+            (ScalarValue::IntervalDayTime(Some(_))
+            | ScalarValue::IntervalYearMonth(Some(_))),
+        ) => {
+            let v = date_addsub_scalar(Utc.timestamp_nanos(*l), i.clone(), true).unwrap();
+            ScalarValue::TimestampNanosecond(Some(v.timestamp_nanos()))
+        }
         _ => panic!("unsupported dimension type"),
     }
 }
 
-fn meets_preceding(
+fn meets_lower_bound(
     value: &ScalarValue,
     current: &ScalarValue,
-    prec: Option<&ScalarValue>,
+    bound: Option<&ScalarValue>,
 ) -> bool {
-    let prec = match prec {
+    let bound = match bound {
         Some(p) => p,
         None => return true,
     };
-    if prec.is_null() {
-        return true;
-    }
-    if current.is_null() {
-        return value.is_null();
-    }
+    assert!(!bound.is_null());
+    assert!(!current.is_null());
     if value.is_null() {
         return false;
     }
-    match (current, value, prec) {
+    match (current, value, bound) {
         (
             ScalarValue::Int64(Some(current)),
             ScalarValue::Int64(Some(value)),
-            ScalarValue::Int64(Some(prec)),
-        ) => return current - value <= *prec,
+            ScalarValue::Int64(Some(bound)),
+        ) => return current + *bound <= *value,
+        (
+            ScalarValue::TimestampNanosecond(Some(_)),
+            ScalarValue::TimestampNanosecond(Some(value)),
+            ScalarValue::IntervalYearMonth(Some(_))
+            | ScalarValue::IntervalDayTime(Some(_)),
+        ) => {
+            let added = match add_dim(current, bound) {
+                ScalarValue::TimestampNanosecond(Some(v)) => v,
+                o => panic!("expected timestamp, got {}", o),
+            };
+            return added <= *value;
+        }
         _ => panic!(
-            "unsupported values in rolling window: ({}, {}, {})",
-            current, value, prec
+            "unsupported values in rolling window: ({:?}, {:?}, {:?})",
+            current, value, bound
         ),
     }
 }
 
-fn meets_following(
+fn meets_upper_bound(
     value: &ScalarValue,
     current: &ScalarValue,
-    prec: Option<&ScalarValue>,
+    bound: Option<&ScalarValue>,
 ) -> bool {
-    meets_preceding(current, value, prec)
+    let bound = match bound {
+        Some(p) => p,
+        None => return true,
+    };
+    assert!(!bound.is_null());
+    assert!(!current.is_null());
+    if value.is_null() {
+        return false;
+    }
+    match (current, value, bound) {
+        (
+            ScalarValue::Int64(Some(current)),
+            ScalarValue::Int64(Some(value)),
+            ScalarValue::Int64(Some(bound)),
+        ) => return *value <= current + *bound,
+        (
+            ScalarValue::TimestampNanosecond(Some(_)),
+            ScalarValue::TimestampNanosecond(Some(value)),
+            ScalarValue::IntervalYearMonth(Some(_))
+            | ScalarValue::IntervalDayTime(Some(_)),
+        ) => {
+            let added = match add_dim(current, bound) {
+                ScalarValue::TimestampNanosecond(Some(v)) => v,
+                o => panic!("expected timestamp, got {}", o),
+            };
+            return *value <= added;
+        }
+        _ => panic!(
+            "unsupported values in rolling window: ({:?}, {:?}, {:?})",
+            current, value, bound
+        ),
+    }
 }
 
 fn expect_non_null_scalar(

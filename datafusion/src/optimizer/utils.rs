@@ -348,7 +348,7 @@ pub fn rewrite_expression(expr: &Expr, expressions: &[Expr]) -> Result<Expr> {
                     args: expressions[..partition_index].to_vec(),
                     partition_by: expressions[partition_index + 1..sort_index].to_vec(),
                     order_by: expressions[sort_index + 1..].to_vec(),
-                    window_frame: *window_frame,
+                    window_frame: window_frame.clone(),
                 })
             }
         }

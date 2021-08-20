@@ -1121,7 +1121,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 leading_precision,
                 last_field,
                 fractional_seconds_precision,
-            }) => self.sql_interval_to_literal(
+            }) => Self::sql_interval_to_literal(
                 value,
                 leading_field,
                 leading_precision,
@@ -1475,13 +1475,13 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                     }
                 };
 
-                let start = first_bound.clone().into();
+                let start = first_bound.clone().try_into()?;
                 let end = second_bound
                     .clone()
                     .unwrap_or(sqlparser::ast::WindowFrameBound::CurrentRow)
-                    .into();
+                    .try_into()?;
 
-                check_window_bound_order(start, end)?;
+                check_window_bound_order(&start, &end)?;
 
                 Ok(Expr::RollingAggregate {
                     agg: Box::new(agg),
@@ -1532,8 +1532,8 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
         }
     }
 
-    fn sql_interval_to_literal(
-        &self,
+    #[allow(missing_docs)]
+    pub(crate) fn sql_interval_to_literal(
         value: &str,
         leading_field: &Option<DateTimeField>,
         leading_precision: &Option<u64>,

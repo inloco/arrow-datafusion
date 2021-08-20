@@ -24,9 +24,15 @@
 //! - An EXCLUDE clause.
 
 use crate::error::{DataFusionError, Result};
+use crate::execution::context::ExecutionContextState;
+use crate::logical_plan::Expr;
+use crate::scalar::ScalarValue;
+use crate::sql::planner::SqlToRel;
 use serde_derive::{Deserialize, Serialize};
 use sqlparser::ast;
+use sqlparser::ast::DateTimeField;
 use std::cmp::Ordering;
+use std::convert::TryInto;
 use std::convert::{From, TryFrom};
 use std::fmt;
 
@@ -35,7 +41,7 @@ use std::fmt;
 /// The ending frame boundary can be omitted (if the BETWEEN and AND keywords that surround the
 /// starting frame boundary are also omitted), in which case the ending frame boundary defaults to
 /// CURRENT ROW.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WindowFrame {
     /// A frame type - either ROWS, RANGE or GROUPS
     pub units: WindowFrameUnits,
@@ -60,21 +66,24 @@ impl TryFrom<ast::WindowFrame> for WindowFrame {
     type Error = DataFusionError;
 
     fn try_from(value: ast::WindowFrame) -> Result<Self> {
-        let start_bound = value.start_bound.into();
+        let start_bound = value.start_bound.try_into()?;
         let end_bound = value
             .end_bound
-            .map(WindowFrameBound::from)
-            .unwrap_or(WindowFrameBound::CurrentRow);
-        check_window_bound_order(start_bound, end_bound)?;
+            .map(WindowFrameBound::try_from)
+            .unwrap_or(Ok(WindowFrameBound::CurrentRow))?;
+        check_window_bound_order(&start_bound, &end_bound)?;
+
+        let is_allowed_range_bound = |s: &ScalarValue| match s {
+            ScalarValue::Int64(Some(i)) => *i == 0,
+            _ => false,
+        };
 
         let units = value.units.into();
         if units == WindowFrameUnits::Range {
-            for bound in &[start_bound, end_bound] {
+            for bound in &[&start_bound, &end_bound] {
                 match bound {
                     WindowFrameBound::Preceding(Some(v))
-                    | WindowFrameBound::Following(Some(v))
-                        if *v > 0 =>
-                    {
+                    | WindowFrameBound::Following(Some(v)) if !is_allowed_range_bound(v) => {
                         Err(DataFusionError::NotImplemented(format!(
                             "With WindowFrameUnits={}, the bound cannot be {} PRECEDING or FOLLOWING at the moment",
                             units, v
@@ -94,8 +103,8 @@ impl TryFrom<ast::WindowFrame> for WindowFrame {
 
 #[allow(missing_docs)]
 pub fn check_window_bound_order(
-    start_bound: WindowFrameBound,
-    end_bound: WindowFrameBound,
+    start_bound: &WindowFrameBound,
+    end_bound: &WindowFrameBound,
 ) -> Result<()> {
     if let WindowFrameBound::Following(None) = start_bound {
         Err(DataFusionError::Execution(
@@ -105,13 +114,18 @@ pub fn check_window_bound_order(
         Err(DataFusionError::Execution(
             "Invalid window frame: end bound cannot be unbounded preceding".to_owned(),
         ))
-    } else if start_bound > end_bound {
-        Err(DataFusionError::Execution(format!(
-            "Invalid window frame: start bound ({}) cannot be larger than end bound ({})",
-            start_bound, end_bound
-        )))
     } else {
-        Ok(())
+        match start_bound.logical_cmp(&end_bound)  {
+            None =>  Err(DataFusionError::Execution(format!(
+                    "Invalid window frame: start bound ({}) is incompatble with the end bound ({})",
+                    start_bound, end_bound
+                ))),
+            Some(o) if o > Ordering::Equal => Err(DataFusionError::Execution(format!(
+                    "Invalid window frame: start bound ({}) cannot be larger than end bound ({})",
+                    start_bound, end_bound
+                ))),
+            Some(_) => Ok(()),
+        }
     }
 }
 
@@ -134,7 +148,7 @@ impl Default for WindowFrame {
 /// 5. UNBOUNDED FOLLOWING
 ///
 /// in this implementation we'll only allow <expr> to be u64 (i.e. no dynamic boundary)
-#[derive(Debug, Clone, Copy, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WindowFrameBound {
     /// 1. UNBOUNDED PRECEDING
     /// The frame boundary is the first row in the partition.
@@ -142,7 +156,7 @@ pub enum WindowFrameBound {
     /// 2. <expr> PRECEDING
     /// <expr> must be a non-negative constant numeric expression. The boundary is a row that
     /// is <expr> "units" prior to the current row.
-    Preceding(Option<u64>),
+    Preceding(Option<ScalarValue>),
     /// 3. The current row.
     ///
     /// For RANGE and GROUPS frame types, peers of the current row are also
@@ -155,16 +169,54 @@ pub enum WindowFrameBound {
     ///
     /// 5. UNBOUNDED FOLLOWING
     /// The frame boundary is the last row in the partition.
-    Following(Option<u64>),
+    Following(Option<ScalarValue>),
 }
 
-impl From<ast::WindowFrameBound> for WindowFrameBound {
-    fn from(value: ast::WindowFrameBound) -> Self {
+impl TryFrom<ast::WindowFrameBound> for WindowFrameBound {
+    type Error = DataFusionError;
+
+    fn try_from(value: ast::WindowFrameBound) -> Result<Self> {
+        let value_to_scalar = |v| -> Result<_> {
+            match v {
+                None => Ok(None),
+                Some(ast::Value::Number(v, _)) => match v.parse() {
+                        Err(_) => Err(DataFusionError::Plan(format!("could not convert window frame bound '{}' to int64", v))),
+                        Ok(v) => Ok(Some(ScalarValue::Int64(Some(v)))),
+                },
+                Some(ast::Value::Interval { value, leading_field, leading_precision, last_field, fractional_seconds_precision })
+                    => Ok(Some(interval_to_scalar(&value, &leading_field, &leading_precision, &last_field, &fractional_seconds_precision)?)),
+                Some(o) => Err(DataFusionError::Plan(format!("window frame bound must be a positive integer or an INTERVAL, got {}", o))),
+            }
+        };
+
         match value {
-            ast::WindowFrameBound::Preceding(v) => Self::Preceding(v),
-            ast::WindowFrameBound::Following(v) => Self::Following(v),
-            ast::WindowFrameBound::CurrentRow => Self::CurrentRow,
+            ast::WindowFrameBound::Preceding(v) => {
+                Ok(Self::Preceding(value_to_scalar(v)?))
+            }
+            ast::WindowFrameBound::Following(v) => {
+                Ok(Self::Following(value_to_scalar(v)?))
+            }
+            ast::WindowFrameBound::CurrentRow => Ok(Self::CurrentRow),
         }
+    }
+}
+
+fn interval_to_scalar(
+    value: &str,
+    leading_field: &Option<DateTimeField>,
+    leading_precision: &Option<u64>,
+    last_field: &Option<DateTimeField>,
+    fractional_seconds_precision: &Option<u64>,
+) -> Result<ScalarValue> {
+    match SqlToRel::<ExecutionContextState>::sql_interval_to_literal(
+        value,
+        leading_field,
+        leading_precision,
+        last_field,
+        fractional_seconds_precision,
+    )? {
+        Expr::Literal(v) => Ok(v),
+        o => panic!("unexpected result of interval_to_literal: {:?}", o),
     }
 }
 
@@ -180,39 +232,52 @@ impl fmt::Display for WindowFrameBound {
     }
 }
 
-impl PartialEq for WindowFrameBound {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-
-impl PartialOrd for WindowFrameBound {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for WindowFrameBound {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.get_rank().cmp(&other.get_rank())
-    }
-}
-
 impl WindowFrameBound {
-    /// get the rank of this window frame bound.
-    ///
-    /// the rank is a tuple of (u8, u64) because we'll firstly compare the kind and then the value
-    /// which requires special handling e.g. with preceding the larger the value the smaller the
-    /// rank and also for 0 preceding / following it is the same as current row
-    fn get_rank(&self) -> (u8, u64) {
-        match self {
-            WindowFrameBound::Preceding(None) => (0, 0),
-            WindowFrameBound::Following(None) => (4, 0),
-            WindowFrameBound::Preceding(Some(0))
-            | WindowFrameBound::CurrentRow
-            | WindowFrameBound::Following(Some(0)) => (2, 0),
-            WindowFrameBound::Preceding(Some(v)) => (1, u64::MAX - *v),
-            WindowFrameBound::Following(Some(v)) => (3, *v),
+    /// We deliberately avoid implementing [PartialCmp] as this is non-structural comparison.
+    /// The reason is that we severly limit a combination of scalars accepted by this function.
+    pub fn logical_cmp(&self, other: &Self) -> Option<Ordering> {
+        use WindowFrameBound::{CurrentRow, Following, Preceding};
+        let ord = |v: &WindowFrameBound| match v {
+            Preceding(_) => 0,
+            CurrentRow => 1,
+            Following(_) => 2,
+        };
+
+        let lo = ord(self);
+        let ro = ord(other);
+        let o = lo.cmp(&ro);
+        if o != Ordering::Equal {
+            return Some(o);
+        }
+
+        let (l, r) = match (self, other) {
+            (Preceding(Some(l)), Preceding(Some(r))) => (r, l), // reverse comparison order.
+            (Following(Some(l)), Following(Some(r))) => (l, r),
+
+            (CurrentRow, CurrentRow) => return Some(Ordering::Equal),
+
+            (Preceding(None), Preceding(None)) => return Some(Ordering::Equal),
+            (Preceding(None), Preceding(Some(_))) => return Some(Ordering::Less),
+            (Preceding(Some(_)), Preceding(None)) => return Some(Ordering::Greater),
+
+            (Following(None), Following(None)) => return Some(Ordering::Equal),
+            (Following(Some(_)), Following(None)) => return Some(Ordering::Less),
+            (Following(None), Following(Some(_))) => return Some(Ordering::Greater),
+            _ => panic!("unhandled bounds: {} and {}", self, other),
+        };
+
+        match (l, r) {
+            (ScalarValue::Int64(Some(l)), ScalarValue::Int64(Some(r))) => Some(l.cmp(r)),
+            (
+                ScalarValue::IntervalDayTime(Some(l)),
+                ScalarValue::IntervalDayTime(Some(r)),
+            ) => Some(l.cmp(r)),
+            (
+                ScalarValue::IntervalYearMonth(Some(l)),
+                ScalarValue::IntervalYearMonth(Some(r)),
+            ) => Some(l.cmp(r)),
+            // Cannot compare other types.
+            _ => None,
         }
     }
 }

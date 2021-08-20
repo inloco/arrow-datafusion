@@ -16,6 +16,7 @@
 // under the License.
 
 pub mod alias;
+pub mod datetime;
 pub mod join;
 pub mod joinagg;
 pub mod rolling;

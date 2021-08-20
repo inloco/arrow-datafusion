@@ -1396,7 +1396,7 @@ impl DefaultPhysicalPlanner {
                     &args,
                     &partition_by,
                     &order_by,
-                    *window_frame,
+                    window_frame.clone(),
                     physical_input_schema,
                 )
             }

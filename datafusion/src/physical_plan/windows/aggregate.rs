@@ -59,7 +59,10 @@ impl AggregateWindowExpr {
     /// the aggregate window function operates based on window frame, and by default the mode is
     /// "range".
     fn evaluation_mode(&self) -> WindowFrameUnits {
-        self.window_frame.unwrap_or_default().units
+        self.window_frame
+            .as_ref()
+            .map(|f| f.units)
+            .unwrap_or(WindowFrameUnits::Range)
     }
 
     /// create a new accumulator based on the underlying aggregation function
