@@ -441,13 +441,19 @@ impl LogicalPlanBuilder {
         every: Expr,
         rolling_aggs: Vec<Expr>,
         mut partition_by: Vec<Column>,
+        group_by_dimension: Option<Expr>,
+        aggs: Vec<Expr>,
     ) -> Result<Self> {
-        // TODO: it's confusing we're looking at post-aggregation schema here.
         let dimension = dimension.normalize(&self.plan)?;
         for c in &mut partition_by {
             *c = std::mem::replace(c, Column::from_name("")).normalize(&self.plan)?;
         }
         let rolling_aggs = normalize_cols(rolling_aggs, &self.plan)?;
+
+        let group_by_dimension = group_by_dimension
+            .map(|d| normalize_col(d, &self.plan))
+            .transpose()?;
+        let aggs = normalize_cols(aggs, &self.plan)?;
 
         if !find_columns(&from).is_empty() {
             return Err(DataFusionError::Plan(
@@ -482,8 +488,23 @@ impl LogicalPlanBuilder {
             }
         }
 
+        if let Some(d) = &group_by_dimension {
+            let group_dim_t = d.get_type(&schema)?;
+            let dim_t = schema.field_from_column(&dimension)?.data_type();
+            if &group_dim_t != dim_t {
+                return Err(DataFusionError::Plan(format!(
+                    "GROUP BY DIMENSION and DIMENSION have different types: {} and {}",
+                    group_dim_t, dim_t
+                )));
+            }
+        }
+
         // TODO: take other fields from input into account.
-        validate_unique_names("Rolling window", &rolling_aggs, self.plan.schema())?;
+        validate_unique_names(
+            "Rolling window",
+            rolling_aggs.iter().chain(aggs.iter()),
+            self.plan.schema(),
+        )?;
 
         // Compute schema.
         let schema = build_rolling_aggregate_schema(
@@ -492,6 +513,7 @@ impl LogicalPlanBuilder {
             from_type,
             &partition_by,
             &rolling_aggs,
+            &aggs,
         )?;
         let p = LogicalPlan::Extension {
             node: Arc::new(RollingWindowAggregate {
@@ -503,6 +525,8 @@ impl LogicalPlanBuilder {
                 every,
                 partition_by,
                 rolling_aggs,
+                group_by_dimension,
+                aggs,
             }),
         };
         Ok(LogicalPlanBuilder::from(p))
@@ -535,6 +559,7 @@ fn build_rolling_aggregate_schema(
     dimension_type: DataType,
     partition_by: &[Column],
     rolling_aggs: &[Expr],
+    aggs: &[Expr],
 ) -> Result<DFSchemaRef> {
     let mut fields = Vec::with_capacity(input_schema.fields().len() + rolling_aggs.len());
 
@@ -570,6 +595,9 @@ fn build_rolling_aggregate_schema(
 
     // Followed by the rolling window aggregation results.
     fields.extend(exprlist_to_fields(rolling_aggs.iter(), input_schema)?);
+
+    // Followed by the extra aggregation results.
+    fields.extend(exprlist_to_fields(aggs.iter(), input_schema)?);
 
     Ok(Arc::new(DFSchema::new(fields)?))
 }
