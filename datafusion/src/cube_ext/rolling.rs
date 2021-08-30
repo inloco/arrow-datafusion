@@ -462,7 +462,12 @@ impl ExecutionPlan for RollingWindowAggExec {
             .group_by_dimension
             .as_ref()
             .map(|d| -> Result<_, DataFusionError> {
-                Ok(d.evaluate(&input)?.into_array(num_rows))
+                let mut d = d.evaluate(&input)?.into_array(num_rows);
+                if d.data_type() != &dim_iter_type {
+                    // This is to upcast timestamps to nanosecond precision.
+                    d = arrow::compute::cast(&d, &dim_iter_type)?;
+                }
+                Ok(d)
             })
             .transpose()?;
         let extra_aggs_inputs = self
