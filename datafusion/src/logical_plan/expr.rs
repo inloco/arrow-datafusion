@@ -31,6 +31,7 @@ use arrow::{compute::can_cast_types, datatypes::DataType};
 use functions::{ReturnTypeFunction, ScalarFunctionImplementation, Signature};
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
+use sqlparser::ast::RollingOffset;
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::fmt;
@@ -357,6 +358,8 @@ pub enum Expr {
         start: window_frames::WindowFrameBound,
         /// End
         end: window_frames::WindowFrameBound,
+        /// Offset
+        offset: RollingOffset,
     },
     /// Returns whether the list contains the expr value.
     InList {
@@ -935,10 +938,12 @@ impl Expr {
                 agg,
                 start: start_bound,
                 end: end_bound,
+                offset,
             } => Expr::RollingAggregate {
                 agg: rewrite_boxed(agg, rewriter)?,
                 start: start_bound,
                 end: end_bound,
+                offset,
             },
             Expr::Wildcard => Expr::Wildcard,
         };
@@ -1669,9 +1674,11 @@ impl fmt::Debug for Expr {
                 agg,
                 start: start_bound,
                 end: end_bound,
+                offset,
             } => {
                 write!(f, "ROLLING({:?} RANGE", agg)?;
                 write!(f, " BETWEEN {} AND {}", start_bound, end_bound)?;
+                write!(f, " OFFSET {}", offset)?;
                 write!(f, ")")
             }
             Expr::InList {
@@ -1805,11 +1812,17 @@ fn create_name(e: &Expr, input_schema: &DFSchema) -> Result<String> {
             }
             Ok(format!("{}({})", fun.name, names.join(",")))
         }
-        Expr::RollingAggregate { agg, start, end } => Ok(format!(
-            "ROLLING({} RANGE BETWEEN {} AND {})",
+        Expr::RollingAggregate {
+            agg,
+            start,
+            end,
+            offset,
+        } => Ok(format!(
+            "ROLLING({} RANGE BETWEEN {} AND {} OFFSET {})",
             create_name(agg, input_schema)?,
             start,
-            end
+            end,
+            offset,
         )),
         Expr::InList {
             expr,

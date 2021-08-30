@@ -443,13 +443,15 @@ pub fn rewrite_expression(expr: &Expr, expressions: &[Expr]) -> Result<Expr> {
         }
         Expr::InList { .. } => Ok(expr.clone()),
         Expr::RollingAggregate {
+            agg: _,
             start: start_bound,
             end: end_bound,
-            ..
+            offset,
         } => Ok(Expr::RollingAggregate {
             agg: Box::new(expressions[0].clone()),
             start: start_bound.clone(),
             end: end_bound.clone(),
+            offset: *offset,
         }),
         Expr::Wildcard { .. } => Err(DataFusionError::Internal(
             "Wildcard expressions are not valid in a logical query plan".to_owned(),

@@ -45,6 +45,7 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use hashbrown::HashMap;
 use itertools::Itertools;
+use sqlparser::ast::RollingOffset;
 use std::any::Any;
 use std::cmp::{max, Ordering};
 use std::convert::TryFrom;
@@ -226,7 +227,12 @@ impl ExtensionPlanner for Planner {
             .iter()
             .map(|e| -> Result<_, DataFusionError> {
                 match e {
-                    Expr::RollingAggregate { agg, start, end } => {
+                    Expr::RollingAggregate {
+                        agg,
+                        start,
+                        end,
+                        offset,
+                    } => {
                         let start = frame_bound_to_diff(start, dimension_type)?;
                         let end = frame_bound_to_diff(end, dimension_type)?;
                         let agg = planner.create_aggregate_expr(
@@ -239,6 +245,10 @@ impl ExtensionPlanner for Planner {
                             agg,
                             lower_bound: start,
                             upper_bound: end,
+                            offset_to_end: match offset {
+                                RollingOffset::Start => false,
+                                RollingOffset::End => true,
+                            },
                         })
                     }
                     _ => panic!("expected ROLLING() aggregate, got {:?}", e),
@@ -341,6 +351,8 @@ pub struct RollingAgg {
     /// The bound is inclusive.
     pub upper_bound: Option<ScalarValue>,
     pub agg: Arc<dyn AggregateExpr>,
+    /// When true, all calculations must be done for the last point in the interval.
+    pub offset_to_end: bool,
 }
 
 #[derive(Debug)]
@@ -495,6 +507,11 @@ impl ExecutionPlan for RollingWindowAggExec {
                 // Avoid running indefinitely due to all kinds of errors.
                 let mut window_start = group_start;
                 let mut window_end = group_start;
+                let offset_to_end = if r.offset_to_end {
+                    Some(&self.every)
+                } else {
+                    None
+                };
 
                 let mut d = self.from.clone();
                 let mut d_iter = 0;
@@ -505,6 +522,7 @@ impl ExecutionPlan for RollingWindowAggExec {
                                 .unwrap(),
                             &d,
                             r.lower_bound.as_ref(),
+                            offset_to_end,
                         )
                     {
                         window_start += 1;
@@ -515,6 +533,7 @@ impl ExecutionPlan for RollingWindowAggExec {
                             &ScalarValue::try_from_array(&dimension, window_end).unwrap(),
                             &d,
                             r.upper_bound.as_ref(),
+                            offset_to_end,
                         )
                     {
                         window_end += 1;
@@ -747,10 +766,38 @@ fn compute_agg_inputs(
         .collect()
 }
 
+/// Returns `(value, current+bounds)` pair that can be used for comparison to check window bounds.
+fn prepare_bound_compare(
+    value: &ScalarValue,
+    current: &ScalarValue,
+    bound: &ScalarValue,
+    offset_to_end: Option<&ScalarValue>,
+) -> (i64, i64) {
+    let mut added = add_dim(current, bound);
+    if let Some(offset) = offset_to_end {
+        added = add_dim(&added, offset)
+    }
+
+    let (mut added, value) = match (added, value) {
+        (ScalarValue::Int64(Some(a)), ScalarValue::Int64(Some(v))) => (a, v),
+        (
+            ScalarValue::TimestampNanosecond(Some(a)),
+            ScalarValue::TimestampNanosecond(Some(v)),
+        ) => (a, v),
+        (a, v) => panic!("unsupported values in rolling window: ({:?}, {:?})", a, v),
+    };
+
+    if offset_to_end.is_some() {
+        added -= 1
+    }
+    (*value, added)
+}
+
 fn meets_lower_bound(
     value: &ScalarValue,
     current: &ScalarValue,
     bound: Option<&ScalarValue>,
+    offset_to_end: Option<&ScalarValue>,
 ) -> bool {
     let bound = match bound {
         Some(p) => p,
@@ -761,35 +808,15 @@ fn meets_lower_bound(
     if value.is_null() {
         return false;
     }
-    match (current, value, bound) {
-        (
-            ScalarValue::Int64(Some(current)),
-            ScalarValue::Int64(Some(value)),
-            ScalarValue::Int64(Some(bound)),
-        ) => return current + *bound <= *value,
-        (
-            ScalarValue::TimestampNanosecond(Some(_)),
-            ScalarValue::TimestampNanosecond(Some(value)),
-            ScalarValue::IntervalYearMonth(Some(_))
-            | ScalarValue::IntervalDayTime(Some(_)),
-        ) => {
-            let added = match add_dim(current, bound) {
-                ScalarValue::TimestampNanosecond(Some(v)) => v,
-                o => panic!("expected timestamp, got {}", o),
-            };
-            return added <= *value;
-        }
-        _ => panic!(
-            "unsupported values in rolling window: ({:?}, {:?}, {:?})",
-            current, value, bound
-        ),
-    }
+    let (value, added) = prepare_bound_compare(value, current, bound, offset_to_end);
+    added <= value
 }
 
 fn meets_upper_bound(
     value: &ScalarValue,
     current: &ScalarValue,
     bound: Option<&ScalarValue>,
+    offset_to_end: Option<&ScalarValue>,
 ) -> bool {
     let bound = match bound {
         Some(p) => p,
@@ -800,29 +827,8 @@ fn meets_upper_bound(
     if value.is_null() {
         return false;
     }
-    match (current, value, bound) {
-        (
-            ScalarValue::Int64(Some(current)),
-            ScalarValue::Int64(Some(value)),
-            ScalarValue::Int64(Some(bound)),
-        ) => return *value <= current + *bound,
-        (
-            ScalarValue::TimestampNanosecond(Some(_)),
-            ScalarValue::TimestampNanosecond(Some(value)),
-            ScalarValue::IntervalYearMonth(Some(_))
-            | ScalarValue::IntervalDayTime(Some(_)),
-        ) => {
-            let added = match add_dim(current, bound) {
-                ScalarValue::TimestampNanosecond(Some(v)) => v,
-                o => panic!("expected timestamp, got {}", o),
-            };
-            return *value <= added;
-        }
-        _ => panic!(
-            "unsupported values in rolling window: ({:?}, {:?}, {:?})",
-            current, value, bound
-        ),
-    }
+    let (value, added) = prepare_bound_compare(value, current, bound, offset_to_end);
+    value <= added
 }
 
 fn expect_non_null_scalar(

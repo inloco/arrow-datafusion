@@ -388,10 +388,12 @@ where
                 agg,
                 start: start_bound,
                 end: end_bound,
+                offset,
             } => Ok(Expr::RollingAggregate {
                 agg: Box::new(clone_with_replacement(agg, replacement_fn)?),
                 start: start_bound.clone(),
                 end: end_bound.clone(),
+                offset: *offset,
             }),
             Expr::Wildcard => Ok(Expr::Wildcard),
         },

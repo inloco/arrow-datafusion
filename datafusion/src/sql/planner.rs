@@ -48,9 +48,9 @@ use arrow::datatypes::*;
 use hashbrown::HashMap;
 use sqlparser::ast::{
     BinaryOperator, DataType as SQLDataType, DateTimeField, Expr as SQLExpr, FunctionArg,
-    Ident, Join, JoinConstraint, JoinOperator, ObjectName, Offset, Query, Select,
-    SelectItem, SetExpr, SetOperator, ShowStatementFilter, TableFactor, TableWithJoins,
-    UnaryOperator, Value,
+    Ident, Join, JoinConstraint, JoinOperator, ObjectName, Offset, Query, RollingOffset,
+    Select, SelectItem, SetExpr, SetOperator, ShowStatementFilter, TableFactor,
+    TableWithJoins, UnaryOperator, Value,
 };
 use sqlparser::ast::{ColumnDef as SQLColumnDef, ColumnOption};
 use sqlparser::ast::{OrderByExpr, Statement};
@@ -1482,6 +1482,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 agg,
                 first_bound,
                 second_bound,
+                offset,
             } => {
                 let agg = match self.sql_expr_to_logical_expr(&agg, schema)? {
                     e @ Expr::AggregateFunction { .. }
@@ -1506,6 +1507,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                     agg: Box::new(agg),
                     start,
                     end,
+                    offset: (*offset).unwrap_or(RollingOffset::Start),
                 })
             }
 
