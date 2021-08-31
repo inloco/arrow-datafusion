@@ -1582,6 +1582,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             )));
         }
 
+        const DAYS_PER_WEEK: f32 = 7_f32;
         const SECONDS_PER_HOUR: f32 = 3_600_f32;
         const MILLIS_PER_SECOND: f32 = 1_000_f32;
 
@@ -1629,6 +1630,11 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             match interval_type.to_lowercase().as_str() {
                 "year" => Ok(align_interval_parts(interval_period * 12_f32, 0.0, 0.0)),
                 "month" => Ok(align_interval_parts(interval_period, 0.0, 0.0)),
+                "week" | "weeks" => Ok(align_interval_parts(
+                    0.0,
+                    interval_period * DAYS_PER_WEEK,
+                    0.0,
+                )),
                 "day" | "days" => Ok(align_interval_parts(0.0, interval_period, 0.0)),
                 "hour" | "hours" => {
                     Ok((0, 0, interval_period * SECONDS_PER_HOUR * MILLIS_PER_SECOND))
