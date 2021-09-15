@@ -32,8 +32,9 @@ use arrow::compute::kernels::comparison::{
     eq_scalar, gt_eq_scalar, gt_scalar, lt_eq_scalar, lt_scalar, neq_scalar,
 };
 use arrow::compute::kernels::comparison::{
-    eq_utf8, gt_eq_utf8, gt_utf8, like_utf8, like_utf8_scalar, lt_eq_utf8, lt_utf8,
-    neq_utf8, nlike_utf8, nlike_utf8_scalar,
+    eq_utf8, gt_eq_utf8, gt_utf8, ilike_utf8, ilike_utf8_scalar, like_utf8,
+    like_utf8_scalar, lt_eq_utf8, lt_utf8, neq_utf8, nilike_utf8, nilike_utf8_scalar,
+    nlike_utf8, nlike_utf8_scalar,
 };
 use arrow::compute::kernels::comparison::{
     eq_utf8_scalar, gt_eq_utf8_scalar, gt_utf8_scalar, lt_eq_utf8_scalar, lt_utf8_scalar,
@@ -503,7 +504,9 @@ fn common_binary_type(
         // logical equality operators have their own rules, and always return a boolean
         Operator::Eq | Operator::NotEq => eq_coercion(lhs_type, rhs_type),
         // "like" operators operate on strings and always return a boolean
-        Operator::Like | Operator::NotLike => string_coercion(lhs_type, rhs_type),
+        Operator::Like | Operator::NotLike | Operator::ILike | Operator::NotILike => {
+            string_coercion(lhs_type, rhs_type)
+        }
         // order-comparison operators have their own rules
         Operator::Lt | Operator::Gt | Operator::GtEq | Operator::LtEq => {
             order_coercion(lhs_type, rhs_type)
@@ -552,6 +555,8 @@ pub fn binary_operator_data_type(
         | Operator::Or
         | Operator::Like
         | Operator::NotLike
+        | Operator::ILike
+        | Operator::NotILike
         | Operator::Lt
         | Operator::Gt
         | Operator::GtEq
@@ -617,6 +622,12 @@ impl PhysicalExpr for BinaryExpr {
                     }
                     Operator::NotLike => {
                         binary_string_array_op_scalar!(array, scalar.clone(), nlike)
+                    }
+                    Operator::ILike => {
+                        binary_string_array_op_scalar!(array, scalar.clone(), ilike)
+                    }
+                    Operator::NotILike => {
+                        binary_string_array_op_scalar!(array, scalar.clone(), nilike)
                     }
                     Operator::Divide => {
                         binary_primitive_array_op_scalar!(array, scalar.clone(), divide)
@@ -685,6 +696,8 @@ impl PhysicalExpr for BinaryExpr {
         let result: Result<ArrayRef> = match &self.op {
             Operator::Like => binary_string_array_op!(left, right, like),
             Operator::NotLike => binary_string_array_op!(left, right, nlike),
+            Operator::ILike => binary_string_array_op!(left, right, ilike),
+            Operator::NotILike => binary_string_array_op!(left, right, nilike),
             Operator::Lt => binary_array_op!(left, right, lt),
             Operator::LtEq => binary_array_op!(left, right, lt_eq),
             Operator::Gt => binary_array_op!(left, right, gt),
