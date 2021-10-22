@@ -35,6 +35,7 @@ use async_trait::async_trait;
 use futures::Stream;
 
 /// Execution plan for reading in-memory batches of data
+#[derive(Clone)]
 pub struct MemoryExec {
     /// The partitions to query
     partitions: Vec<Vec<RecordBatch>>,
@@ -76,12 +77,16 @@ impl ExecutionPlan for MemoryExec {
 
     fn with_new_children(
         &self,
-        _: Vec<Arc<dyn ExecutionPlan>>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        Err(DataFusionError::Internal(format!(
-            "Children cannot be replaced in {:?}",
-            self
-        )))
+        if children.is_empty() {
+            Ok(Arc::new(self.clone()))
+        } else {
+            Err(DataFusionError::Internal(format!(
+                "Children cannot be replaced in {:?}",
+                self
+            )))
+        }
     }
 
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {

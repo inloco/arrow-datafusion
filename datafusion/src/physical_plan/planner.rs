@@ -41,7 +41,9 @@ use crate::physical_plan::hash_join::HashJoinExec;
 use crate::physical_plan::limit::{GlobalLimitExec, LocalLimitExec};
 use crate::physical_plan::merge::MergeExec;
 use crate::physical_plan::merge_join::MergeJoinExec;
-use crate::physical_plan::merge_sort::{MergeReSortExec, MergeSortExec};
+use crate::physical_plan::merge_sort::{
+    LastRowByUniqueKeyExec, MergeReSortExec, MergeSortExec,
+};
 use crate::physical_plan::projection::ProjectionExec;
 use crate::physical_plan::repartition::RepartitionExec;
 use crate::physical_plan::skip::SkipExec;
@@ -946,6 +948,10 @@ impl DefaultPhysicalPlanner {
         {
             Some(node.clone())
         } else if let Some(aliased) = node.as_any().downcast_ref::<FilterExec>() {
+            self.merge_sort_node(aliased.children()[0].clone())
+        } else if let Some(aliased) =
+            node.as_any().downcast_ref::<LastRowByUniqueKeyExec>()
+        {
             self.merge_sort_node(aliased.children()[0].clone())
         } else if let Some(aliased) = node.as_any().downcast_ref::<ProjectionExec>() {
             // TODO
