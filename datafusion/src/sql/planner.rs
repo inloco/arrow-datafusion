@@ -1291,39 +1291,18 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             }),
 
             SQLExpr::InList {
-                expr,
-                list,
-                negated,
+                ref expr,
+                ref list,
+                ref negated,
             } => {
-                let items = list
+                let list_expr = list
                     .iter()
-                    .map(|right| -> Result<_> {
-                        Ok(Expr::BinaryExpr {
-                            left: Box::new(self.sql_expr_to_logical_expr(&expr, schema)?),
-                            op: Operator::Eq,
-                            right: Box::new(
-                                self.sql_expr_to_logical_expr(&right, schema)?,
-                            ),
-                        })
-                    })
+                    .map(|e| self.sql_expr_to_logical_expr(e, schema))
                     .collect::<Result<Vec<_>>>()?;
-                let result = if items.is_empty() {
-                    lit(false)
-                } else if items.len() == 1 {
-                    items.into_iter().next().unwrap()
-                } else {
-                    let mut iter = items.into_iter();
-                    let first = iter.next().unwrap();
-                    iter.fold(first, |a, b| Expr::BinaryExpr {
-                        left: Box::new(a),
-                        op: Operator::Or,
-                        right: Box::new(b),
-                    })
-                };
-                Ok(if *negated {
-                    Expr::Not(Box::new(result))
-                } else {
-                    result
+                Ok(Expr::InList {
+                    expr: Box::new(self.sql_expr_to_logical_expr(expr, schema)?),
+                    list: list_expr,
+                    negated: *negated,
                 })
             }
 
