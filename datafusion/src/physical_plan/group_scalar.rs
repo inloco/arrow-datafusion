@@ -17,9 +17,9 @@
 
 //! Defines scalars used to construct groups, ex. in GROUP BY clauses.
 
-use ordered_float::OrderedFloat;
 use std::convert::{From, TryFrom};
 
+use crate::cube_ext::ordfloat::{OrdF32, OrdF64};
 use crate::error::{DataFusionError, Result};
 use crate::scalar::ScalarValue;
 use arrow::datatypes::DataType;
@@ -29,8 +29,8 @@ use arrow::datatypes::DataType;
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub enum GroupByScalar {
     Null,
-    Float32(OrderedFloat<f32>),
-    Float64(OrderedFloat<f64>),
+    Float32(OrdF32),
+    Float64(OrdF64),
     UInt8(u8),
     UInt16(u16),
     UInt32(u32),
@@ -55,12 +55,8 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
 
     fn try_from(scalar_value: &ScalarValue) -> Result<Self> {
         Ok(match scalar_value {
-            ScalarValue::Float32(Some(v)) => {
-                GroupByScalar::Float32(OrderedFloat::from(*v))
-            }
-            ScalarValue::Float64(Some(v)) => {
-                GroupByScalar::Float64(OrderedFloat::from(*v))
-            }
+            ScalarValue::Float32(Some(v)) => GroupByScalar::Float32(OrdF32::from(*v)),
+            ScalarValue::Float64(Some(v)) => GroupByScalar::Float64(OrdF64::from(*v)),
             ScalarValue::Boolean(Some(v)) => GroupByScalar::Boolean(*v),
             ScalarValue::Int8(Some(v)) => GroupByScalar::Int8(*v),
             ScalarValue::Int16(Some(v)) => GroupByScalar::Int16(*v),
@@ -118,8 +114,8 @@ impl GroupByScalar {
             GroupByScalar::Null => {
                 ScalarValue::try_from(ty).expect("could not create null")
             }
-            GroupByScalar::Float32(v) => ScalarValue::Float32(Some((*v).into())),
-            GroupByScalar::Float64(v) => ScalarValue::Float64(Some((*v).into())),
+            GroupByScalar::Float32(v) => ScalarValue::Float32(Some((*v).0)),
+            GroupByScalar::Float64(v) => ScalarValue::Float64(Some((*v).0)),
             GroupByScalar::Boolean(v) => ScalarValue::Boolean(Some(*v)),
             GroupByScalar::Int8(v) => ScalarValue::Int8(Some(*v)),
             GroupByScalar::Int16(v) => ScalarValue::Int16(Some(*v)),

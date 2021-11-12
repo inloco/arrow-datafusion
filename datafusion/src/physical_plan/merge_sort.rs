@@ -489,6 +489,7 @@ fn merge_sort(
                     sort_keys[c.index]
                         .iter()
                         .map(|a| a.slice(pos[c.index] + len - 1, 2))
+                        .collect::<Vec<_>>(),
                 );
                 let k = Key {
                     values: &sort_keys[c.index],
@@ -537,7 +538,10 @@ fn merge_sort(
                     <= Ordering::Equal,
                 "unsorted data after merge. row {}. data: {:?}",
                 i - 1,
-                key_cols.iter().map(|a| a.slice(i - 1, 2))
+                key_cols
+                    .iter()
+                    .map(|a| a.slice(i - 1, 2))
+                    .collect::<Vec<_>>(),
             );
         }
     }

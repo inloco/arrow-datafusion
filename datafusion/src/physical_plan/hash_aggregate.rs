@@ -61,7 +61,6 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use hashbrown::HashMap;
-use ordered_float::OrderedFloat;
 use pin_project_lite::pin_project;
 
 use arrow::array::{
@@ -77,6 +76,7 @@ use super::{
 
 use crate::cube_ext;
 
+use crate::cube_ext::ordfloat::{OrdF32, OrdF64};
 use crate::physical_plan::sorted_aggregate::SortedAggState;
 use compute::cast;
 use smallvec::smallvec;
@@ -1395,11 +1395,11 @@ pub(crate) fn create_group_by_value(col: &ArrayRef, row: usize) -> Result<GroupB
     match col.data_type() {
         DataType::Float32 => {
             let array = col.as_any().downcast_ref::<Float32Array>().unwrap();
-            Ok(GroupByScalar::Float32(OrderedFloat::from(array.value(row))))
+            Ok(GroupByScalar::Float32(OrdF32::from(array.value(row))))
         }
         DataType::Float64 => {
             let array = col.as_any().downcast_ref::<Float64Array>().unwrap();
-            Ok(GroupByScalar::Float64(OrderedFloat::from(array.value(row))))
+            Ok(GroupByScalar::Float64(OrdF64::from(array.value(row))))
         }
         DataType::UInt8 => {
             let array = col.as_any().downcast_ref::<UInt8Array>().unwrap();

@@ -19,6 +19,7 @@ pub mod alias;
 pub mod datetime;
 pub mod join;
 pub mod joinagg;
+pub mod ordfloat;
 pub mod rolling;
 pub mod sequence;
 pub mod stream;
