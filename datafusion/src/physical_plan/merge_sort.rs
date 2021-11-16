@@ -193,12 +193,11 @@ impl ExecutionPlan for MergeReSortExec {
             )));
         }
 
-        let stream = self.input.execute(0).await?;
-        let all_batches = stream
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<ArrowResult<Vec<_>>>()?;
+        let mut stream = self.input.execute(0).await?;
+        let mut all_batches = Vec::new();
+        while let Some(b) = stream.next().await.transpose()? {
+            all_batches.push(b);
+        }
 
         let schema = self.input.schema();
         let sorted_batches = all_batches
