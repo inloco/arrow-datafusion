@@ -86,6 +86,12 @@ pub struct SqlToRel<'a, S: ContextProvider> {
     schema_provider: &'a S,
 }
 
+#[cfg(feature = "default_nulls_last")]
+const DEFAULT_NULLS_FIRST: bool = false;
+
+#[cfg(not(feature = "default_nulls_last"))]
+const DEFAULT_NULLS_FIRST: bool = true;
+
 impl<'a, S: ContextProvider> SqlToRel<'a, S> {
     /// Create a new query planner
     pub fn new(schema_provider: &'a S) -> Self {
@@ -1040,7 +1046,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             // by default asc
             asc: e.asc.unwrap_or(true),
             // by default nulls first to be consistent with spark
-            nulls_first: e.nulls_first.unwrap_or(true),
+            nulls_first: e.nulls_first.unwrap_or(DEFAULT_NULLS_FIRST),
         })
     }
 

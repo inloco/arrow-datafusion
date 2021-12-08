@@ -42,6 +42,7 @@ simd = ["arrow/simd"]
 crypto_expressions = ["md-5", "sha2"]
 regex_expressions = ["regex", "lazy_static"]
 unicode_expressions = ["unicode-segmentation"]
+default_nulls_last = []
 
 [dependencies]
 ahash = "0.7"
