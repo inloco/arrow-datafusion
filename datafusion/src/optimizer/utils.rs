@@ -441,7 +441,7 @@ pub fn rewrite_expression(expr: &Expr, expressions: &[Expr]) -> Result<Expr> {
                 Ok(expr)
             }
         }
-        Expr::InList { expr, list, negated } => Ok(Expr::InList {
+        Expr::InList { expr, negated, .. } => Ok(Expr::InList {
             expr: Box::new(expressions[0].clone()),
             list: expressions[1..].to_vec(),
             negated: *negated
