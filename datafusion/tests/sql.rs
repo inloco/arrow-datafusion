@@ -3653,27 +3653,27 @@ async fn test_regex_expressions() -> Result<()> {
     test_expression!("regexp_replace('foobarbaz', 'b..', 'X', 'g')", "fooXX");
     test_expression!("regexp_replace('foobarbaz', 'b..', 'X')", "fooXbaz");
     test_expression!(
-        "regexp_replace('foobarbaz', 'b(..)', 'X\\1Y', 'g')",
+        "regexp_replace('foobarbaz', 'b(..)', 'X\\\\1Y', 'g')",
         "fooXarYXazY"
     );
     test_expression!(
-        "regexp_replace('foobarbaz', 'b(..)', 'X\\1Y', NULL)",
+        "regexp_replace('foobarbaz', 'b(..)', 'X\\\\1Y', NULL)",
         "NULL"
     );
     test_expression!("regexp_replace('foobarbaz', 'b(..)', NULL, 'g')", "NULL");
-    test_expression!("regexp_replace('foobarbaz', NULL, 'X\\1Y', 'g')", "NULL");
+    test_expression!("regexp_replace('foobarbaz', NULL, 'X\\\\1Y', 'g')", "NULL");
     test_expression!("regexp_replace('Thomas', '.[mN]a.', 'M')", "ThM");
-    test_expression!("regexp_replace(NULL, 'b(..)', 'X\\1Y', 'g')", "NULL");
+    test_expression!("regexp_replace(NULL, 'b(..)', 'X\\\\1Y', 'g')", "NULL");
     test_expression!("regexp_match('foobarbequebaz', '')", "[]");
     test_expression!(
         "regexp_match('foobarbequebaz', '(bar)(beque)')",
         "[bar, beque]"
     );
     test_expression!("regexp_match('foobarbequebaz', '(ba3r)(bequ34e)')", "NULL");
-    test_expression!("regexp_match('aaa-0', '.*-(\\d)')", "[0]");
-    test_expression!("regexp_match('bb-1', '.*-(\\d)')", "[1]");
-    test_expression!("regexp_match('aa', '.*-(\\d)')", "NULL");
-    test_expression!("regexp_match(NULL, '.*-(\\d)')", "NULL");
+    test_expression!("regexp_match('aaa-0', '.*-(\\\\d)')", "[0]");
+    test_expression!("regexp_match('bb-1', '.*-(\\\\d)')", "[1]");
+    test_expression!("regexp_match('aa', '.*-(\\\\d)')", "NULL");
+    test_expression!("regexp_match(NULL, '.*-(\\\\d)')", "NULL");
     test_expression!("regexp_match('aaa-0', NULL)", "NULL");
     Ok(())
 }
