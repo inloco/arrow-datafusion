@@ -16,7 +16,7 @@
 // under the License.
 
 use arrow::compute::{total_cmp_32, total_cmp_64};
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use smallvec::alloc::fmt::Formatter;
 use std::cmp::Ordering;
 use std::fmt;
