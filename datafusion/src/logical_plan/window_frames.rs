@@ -148,7 +148,7 @@ impl Default for WindowFrame {
 /// 5. UNBOUNDED FOLLOWING
 ///
 /// in this implementation we'll only allow <expr> to be u64 (i.e. no dynamic boundary)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WindowFrameBound {
     /// 1. UNBOUNDED PRECEDING
     /// The frame boundary is the first row in the partition.
@@ -229,6 +229,18 @@ impl fmt::Display for WindowFrameBound {
             WindowFrameBound::Preceding(Some(n)) => write!(f, "{} PRECEDING", n),
             WindowFrameBound::Following(Some(n)) => write!(f, "{} FOLLOWING", n),
         }
+    }
+}
+
+impl PartialEq for WindowFrameBound {
+    fn eq(&self, other: &Self) -> bool {
+        self.logical_cmp(other) == Some(Ordering::Equal)
+    }
+}
+
+impl PartialOrd for WindowFrameBound {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.logical_cmp(other)
     }
 }
 
@@ -324,6 +336,7 @@ impl From<ast::WindowFrameUnits> for WindowFrameUnits {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlparser::ast::Value;
 
     #[test]
     fn test_window_frame_creation() -> Result<()> {
@@ -351,8 +364,14 @@ mod tests {
 
         let window_frame = ast::WindowFrame {
             units: ast::WindowFrameUnits::Range,
-            start_bound: ast::WindowFrameBound::Preceding(Some(1)),
-            end_bound: Some(ast::WindowFrameBound::Preceding(Some(2))),
+            start_bound: ast::WindowFrameBound::Preceding(Some(Value::Number(
+                "1".into(),
+                false,
+            ))),
+            end_bound: Some(ast::WindowFrameBound::Preceding(Some(Value::Number(
+                "2".into(),
+                false,
+            )))),
         };
         let result = WindowFrame::try_from(window_frame);
         assert_eq!(
@@ -362,8 +381,14 @@ mod tests {
 
         let window_frame = ast::WindowFrame {
             units: ast::WindowFrameUnits::Range,
-            start_bound: ast::WindowFrameBound::Preceding(Some(2)),
-            end_bound: Some(ast::WindowFrameBound::Preceding(Some(1))),
+            start_bound: ast::WindowFrameBound::Preceding(Some(Value::Number(
+                "2".into(),
+                false,
+            ))),
+            end_bound: Some(ast::WindowFrameBound::Preceding(Some(Value::Number(
+                "1".into(),
+                false,
+            )))),
         };
         let result = WindowFrame::try_from(window_frame);
         assert_eq!(
@@ -373,8 +398,14 @@ mod tests {
 
         let window_frame = ast::WindowFrame {
             units: ast::WindowFrameUnits::Rows,
-            start_bound: ast::WindowFrameBound::Preceding(Some(2)),
-            end_bound: Some(ast::WindowFrameBound::Preceding(Some(1))),
+            start_bound: ast::WindowFrameBound::Preceding(Some(Value::Number(
+                "2".into(),
+                false,
+            ))),
+            end_bound: Some(ast::WindowFrameBound::Preceding(Some(Value::Number(
+                "1".into(),
+                false,
+            )))),
         };
         let result = WindowFrame::try_from(window_frame);
         assert!(result.is_ok());
@@ -384,24 +415,16 @@ mod tests {
     #[test]
     fn test_eq() {
         assert_eq!(
-            WindowFrameBound::Preceding(Some(0)),
-            WindowFrameBound::CurrentRow
-        );
-        assert_eq!(
-            WindowFrameBound::CurrentRow,
-            WindowFrameBound::Following(Some(0))
-        );
-        assert_eq!(
-            WindowFrameBound::Following(Some(2)),
-            WindowFrameBound::Following(Some(2))
+            WindowFrameBound::Following(Some(ScalarValue::Int64(Some(2)))),
+            WindowFrameBound::Following(Some(ScalarValue::Int64(Some(2))))
         );
         assert_eq!(
             WindowFrameBound::Following(None),
             WindowFrameBound::Following(None)
         );
         assert_eq!(
-            WindowFrameBound::Preceding(Some(2)),
-            WindowFrameBound::Preceding(Some(2))
+            WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(2)))),
+            WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(2))))
         );
         assert_eq!(
             WindowFrameBound::Preceding(None),
@@ -411,34 +434,51 @@ mod tests {
 
     #[test]
     fn test_ord() {
-        assert!(WindowFrameBound::Preceding(Some(1)) < WindowFrameBound::CurrentRow);
+        assert!(
+            WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(1))))
+                < WindowFrameBound::CurrentRow
+        );
         // ! yes this is correct!
         assert!(
-            WindowFrameBound::Preceding(Some(2)) < WindowFrameBound::Preceding(Some(1))
+            WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(2))))
+                < WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(1))))
         );
         assert!(
-            WindowFrameBound::Preceding(Some(u64::MAX))
-                < WindowFrameBound::Preceding(Some(u64::MAX - 1))
+            WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(i64::MAX))))
+                < WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(
+                    i64::MAX - 1
+                ))))
         );
         assert!(
             WindowFrameBound::Preceding(None)
-                < WindowFrameBound::Preceding(Some(1000000))
+                < WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(1000000))))
         );
         assert!(
             WindowFrameBound::Preceding(None)
-                < WindowFrameBound::Preceding(Some(u64::MAX))
+                < WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(i64::MAX))))
         );
-        assert!(WindowFrameBound::Preceding(None) < WindowFrameBound::Following(Some(0)));
         assert!(
-            WindowFrameBound::Preceding(Some(1)) < WindowFrameBound::Following(Some(1))
+            WindowFrameBound::Preceding(None)
+                < WindowFrameBound::Following(Some(ScalarValue::Int64(Some(0))))
         );
-        assert!(WindowFrameBound::CurrentRow < WindowFrameBound::Following(Some(1)));
         assert!(
-            WindowFrameBound::Following(Some(1)) < WindowFrameBound::Following(Some(2))
+            WindowFrameBound::Preceding(Some(ScalarValue::Int64(Some(1))))
+                < WindowFrameBound::Following(Some(ScalarValue::Int64(Some(1))))
         );
-        assert!(WindowFrameBound::Following(Some(2)) < WindowFrameBound::Following(None));
         assert!(
-            WindowFrameBound::Following(Some(u64::MAX))
+            WindowFrameBound::CurrentRow
+                < WindowFrameBound::Following(Some(ScalarValue::Int64(Some(1))))
+        );
+        assert!(
+            WindowFrameBound::Following(Some(ScalarValue::Int64(Some(1))))
+                < WindowFrameBound::Following(Some(ScalarValue::Int64(Some(2))))
+        );
+        assert!(
+            WindowFrameBound::Following(Some(ScalarValue::Int64(Some(2))))
+                < WindowFrameBound::Following(None)
+        );
+        assert!(
+            WindowFrameBound::Following(Some(ScalarValue::Int64(Some(i64::MAX))))
                 < WindowFrameBound::Following(None)
         );
     }

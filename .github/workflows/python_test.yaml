@@ -16,7 +16,8 @@
 # under the License.
 
 name: Python test
-on: [push, pull_request]
+# on: [push, pull_request]
+on: []
 
 jobs:
   test:
@@ -25,8 +26,8 @@ jobs:
       - uses: actions/checkout@v2
       - name: Setup Rust toolchain
         run: |
-          rustup toolchain install nightly-2021-05-10
-          rustup default nightly-2021-05-10
+          rustup toolchain install nightly-2021-07-04
+          rustup default nightly-2021-07-04
           rustup component add rustfmt
       - name: Cache Cargo
         uses: actions/cache@v2

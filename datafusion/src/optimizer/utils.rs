@@ -444,7 +444,7 @@ pub fn rewrite_expression(expr: &Expr, expressions: &[Expr]) -> Result<Expr> {
         Expr::InList { negated, .. } => Ok(Expr::InList {
             expr: Box::new(expressions[0].clone()),
             list: expressions[1..].to_vec(),
-            negated: *negated
+            negated: *negated,
         }),
         Expr::RollingAggregate {
             agg: _,
