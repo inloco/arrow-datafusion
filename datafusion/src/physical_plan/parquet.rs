@@ -461,20 +461,24 @@ impl ExecutionPlan for ParquetExec {
         let predicate_builder = self.predicate_builder.clone();
         let batch_size = self.batch_size;
         let limit = self.limit;
+        let tx_unwind = response_tx.clone();
 
-        cube_ext::spawn_blocking(move || {
-            if let Err(e) = read_files(
-                &filenames,
-                metrics,
-                &projection,
-                &predicate_builder,
-                batch_size,
-                response_tx,
-                limit,
-            ) {
-                println!("Parquet reader thread terminated due to error: {:?}", e);
-            }
-        });
+        cube_ext::spawn_blocking_mpsc_with_catch_unwind(
+            move || {
+                if let Err(e) = read_files(
+                    &filenames,
+                    metrics,
+                    &projection,
+                    &predicate_builder,
+                    batch_size,
+                    response_tx,
+                    limit,
+                ) {
+                    println!("Parquet reader thread terminated due to error: {:?}", e);
+                }
+            },
+            tx_unwind,
+        );
 
         Ok(Box::pin(ParquetStream {
             schema: self.schema.clone(),

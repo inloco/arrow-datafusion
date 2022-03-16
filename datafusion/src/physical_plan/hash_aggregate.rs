@@ -808,7 +808,7 @@ impl GroupedHashAggregateStream {
 
         let schema_clone = schema.clone();
         let task = async move {
-            let result = match strategy {
+            match strategy {
                 AggregateStrategy::Hash => {
                     compute_grouped_hash_aggregate(
                         mode,
@@ -829,10 +829,9 @@ impl GroupedHashAggregateStream {
                     )
                     .await
                 }
-            };
-            tx.send(result)
+            }
         };
-        cube_ext::spawn(task);
+        cube_ext::spawn_oneshot_with_catch_unwind(task, tx);
 
         Self {
             schema,
@@ -1017,12 +1016,8 @@ impl HashAggregateStream {
         let (tx, rx) = futures::channel::oneshot::channel();
 
         let schema_clone = schema.clone();
-        let task = async move {
-            let result =
-                compute_hash_aggregate(mode, schema_clone, aggr_expr, input).await;
-            tx.send(result)
-        };
-        cube_ext::spawn(task);
+        let task = compute_hash_aggregate(mode, schema_clone, aggr_expr, input);
+        cube_ext::spawn_oneshot_with_catch_unwind(task, tx);
 
         Self {
             schema,

@@ -56,6 +56,8 @@ pub enum DataFusionError {
     /// Error returned during execution of the query.
     /// Examples include files not found, errors in parsing certain types.
     Execution(String),
+    /// Error returned if a panic was triggered during query execution.
+    Panic(String),
 }
 
 impl DataFusionError {
@@ -73,7 +75,13 @@ impl From<io::Error> for DataFusionError {
 
 impl From<ArrowError> for DataFusionError {
     fn from(e: ArrowError) -> Self {
-        DataFusionError::ArrowError(e)
+        let prefix = "Panic: ";
+        match e {
+            ArrowError::ComputeError(msg) if msg.starts_with(prefix) => {
+                DataFusionError::Panic(msg[prefix.len()..].to_string())
+            }
+            e => DataFusionError::ArrowError(e),
+        }
     }
 }
 
@@ -112,6 +120,9 @@ impl Display for DataFusionError {
             }
             DataFusionError::Execution(ref desc) => {
                 write!(f, "Execution error: {}", desc)
+            }
+            DataFusionError::Panic(ref desc) => {
+                write!(f, "Panic: {}", desc)
             }
         }
     }

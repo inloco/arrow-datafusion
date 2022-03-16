@@ -122,7 +122,7 @@ impl MemTable {
         let tasks = (0..partition_count)
             .map(|part_i| {
                 let exec = exec.clone();
-                cube_ext::spawn(async move {
+                cube_ext::spawn_with_catch_unwind(async move {
                     let stream = exec.execute(part_i).await?;
                     common::collect(stream).await
                 })

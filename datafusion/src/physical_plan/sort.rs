@@ -253,9 +253,9 @@ impl SortStream {
     ) -> Self {
         let (tx, rx) = futures::channel::oneshot::channel();
         let schema = input.schema();
-        cube_ext::spawn(async move {
+        let task = async move {
             let schema = input.schema();
-            let sorted_batch = common::collect(input)
+            common::collect(input)
                 .await
                 .map_err(DataFusionError::into_arrow_external_error)
                 .and_then(move |batches| {
@@ -268,10 +268,9 @@ impl SortStream {
                         .transpose()?;
                     sort_time.add(now.elapsed().as_nanos() as usize);
                     Ok(result)
-                });
-
-            tx.send(sorted_batch)
-        });
+                })
+        };
+        cube_ext::spawn_oneshot_with_catch_unwind(task, tx);
 
         Self {
             output: rx,

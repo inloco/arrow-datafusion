@@ -126,6 +126,7 @@ impl ExecutionPlan for MergeExec {
                 for part_i in 0..input_partitions {
                     let input = self.input.clone();
                     let mut sender = sender.clone();
+                    let sender_unwind = sender.clone();
                     let task = async move {
                         let mut stream = match input.execute(part_i).await {
                             Err(e) => {
@@ -144,7 +145,7 @@ impl ExecutionPlan for MergeExec {
                             sender.send(item).await.ok();
                         }
                     };
-                    cube_ext::spawn(task);
+                    cube_ext::spawn_mpsc_with_catch_unwind(task, sender_unwind);
                 }
 
                 Ok(Box::pin(MergeStream {

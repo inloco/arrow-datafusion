@@ -18,6 +18,7 @@
 //! Defines common code used in execution plans
 
 use super::{RecordBatchStream, SendableRecordBatchStream};
+use crate::cube_ext;
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::ExecutionPlan;
 use arrow::compute::concat;
@@ -149,24 +150,28 @@ pub(crate) fn spawn_execution(
     mut output: mpsc::Sender<ArrowResult<RecordBatch>>,
     partition: usize,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut stream = match input.execute(partition).await {
-            Err(e) => {
-                // If send fails, plan being torn
-                // down, no place to send the error
-                let arrow_error = ArrowError::ExternalError(Box::new(e));
-                output.send(Err(arrow_error)).await.ok();
-                return;
-            }
-            Ok(stream) => stream,
-        };
+    let output_unwind = output.clone();
+    cube_ext::spawn_mpsc_with_catch_unwind(
+        async move {
+            let mut stream = match input.execute(partition).await {
+                Err(e) => {
+                    // If send fails, plan being torn
+                    // down, no place to send the error
+                    let arrow_error = ArrowError::ExternalError(Box::new(e));
+                    output.send(Err(arrow_error)).await.ok();
+                    return;
+                }
+                Ok(stream) => stream,
+            };
 
-        while let Some(item) = stream.next().await {
-            // If send fails, plan being torn down,
-            // there is no place to send the error
-            output.send(item).await.ok();
-        }
-    })
+            while let Some(item) = stream.next().await {
+                // If send fails, plan being torn down,
+                // there is no place to send the error
+                output.send(item).await.ok();
+            }
+        },
+        output_unwind,
+    )
 }
 
 #[cfg(test)]

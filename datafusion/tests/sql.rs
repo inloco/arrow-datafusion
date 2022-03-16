@@ -3933,6 +3933,47 @@ async fn test_cast_expressions_error() -> Result<()> {
     Ok(())
 }
 
+fn panic_udf(_args: &[ColumnarValue]) -> Result<ColumnarValue> {
+    panic!("oops");
+}
+
+#[tokio::test]
+async fn test_user_defined_panic_expr() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx).unwrap();
+    ctx.register_udf(create_udf(
+        "panic_udf",
+        vec![DataType::Float64],
+        Arc::new(DataType::Float64),
+        Arc::new(panic_udf),
+    ));
+    let sql = "SELECT panic_udf(c2) FROM aggregate_test_100";
+    let plan = ctx.create_logical_plan(sql).unwrap();
+    let plan = ctx.optimize(&plan).unwrap();
+    let plan = ctx.create_physical_plan(&plan).unwrap();
+    let result = collect(plan).await;
+    assert!(matches!(result, Err(DataFusionError::Panic(msg)) if msg == "oops"));
+}
+
+#[tokio::test]
+async fn test_user_defined_panic_group() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx).unwrap();
+    ctx.register_udf(create_udf(
+        "panic_udf",
+        vec![DataType::Float64],
+        Arc::new(DataType::Float64),
+        Arc::new(panic_udf),
+    ));
+    let sql = "SELECT sum(panic_udf(c2)) FROM aggregate_test_100";
+    let plan = ctx.create_logical_plan(sql).unwrap();
+    let plan = ctx.optimize(&plan).unwrap();
+    let plan = ctx.create_physical_plan(&plan).unwrap();
+    let result = collect(plan).await;
+    println!("QQQ {:?}", result)
+    // assert!(matches!(result, Err(DataFusionError::Panic(msg)) if msg == "oops"));
+}
+
 #[tokio::test]
 #[ignore = "CubeStore disabled coalesce batches"]
 async fn test_physical_plan_display_indent() {
