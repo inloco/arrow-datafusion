@@ -18,17 +18,24 @@
 use crate::error::DataFusionError;
 use arrow::error::ArrowError;
 use futures::future::FutureExt;
+use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[derive(PartialEq, Debug)]
 pub struct PanicError {
-    msg: String,
+    pub msg: String,
 }
 
 impl PanicError {
     pub fn new(msg: String) -> PanicError {
         PanicError { msg }
+    }
+}
+
+impl Display for PanicError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Panic: {}", self.msg)
     }
 }
 
