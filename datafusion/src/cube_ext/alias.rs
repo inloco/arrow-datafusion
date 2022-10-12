@@ -70,11 +70,10 @@ impl UserDefinedLogicalNode for LogicalAlias {
     ) -> Arc<dyn UserDefinedLogicalNode + Send + Sync> {
         assert_eq!(exprs.len(), 0);
         assert_eq!(inputs.len(), 1);
-
         Arc::new(LogicalAlias {
             input: inputs[0].clone(),
             alias: self.alias.clone(),
-            schema: self.schema.clone(),
+            schema: Arc::new(inputs[0].schema().alias(Some(&self.alias)).unwrap()),
         })
     }
 }

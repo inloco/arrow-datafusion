@@ -747,9 +747,7 @@ fn add_dim(l: &ScalarValue, r: &ScalarValue) -> ScalarValue {
         }
         (
             ScalarValue::TimestampNanosecond(Some(l)),
-            i
-            @
-            (ScalarValue::IntervalDayTime(Some(_))
+            i @ (ScalarValue::IntervalDayTime(Some(_))
             | ScalarValue::IntervalYearMonth(Some(_))),
         ) => {
             let v = date_addsub_scalar(Utc.timestamp_nanos(*l), i.clone(), true).unwrap();
