@@ -674,15 +674,12 @@ impl DefaultPhysicalPlanner {
                     .collect::<Result<Vec<_>>>()?;
                 let sorted_on = physical_plans
                     .iter()
-                    .map(|p| {
-                        self.merge_sort_node(p.clone()).and_then(|n| {
-                            n.as_any()
-                                .downcast_ref::<MergeSortExec>()
-                                .map(|n| n.columns.clone())
-                        })
-                    })
+                    .map(|p| self.merge_sort_node_sorted_on(p.clone(), None))
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
                     .unique()
                     .collect::<Vec<_>>();
+
                 let merge_node: Arc<dyn ExecutionPlan> =
                     if sorted_on.iter().all(|on| on.is_some()) && sorted_on.len() == 1 {
                         Arc::new(MergeSortExec::try_new(
@@ -963,6 +960,41 @@ impl DefaultPhysicalPlanner {
             self.merge_sort_node(aliased.children()[0].clone())
         } else {
             None
+        }
+    }
+
+    fn merge_sort_node_sorted_on(
+        &self,
+        node: Arc<dyn ExecutionPlan>,
+        projection: Option<SchemaRef>,
+    ) -> Result<Option<Vec<Column>>> {
+        if let Some(merge) = node.as_any().downcast_ref::<MergeSortExec>() {
+            match projection {
+                Some(schema) => {
+                    let cols_len = schema.fields().len();
+                    let mut columns = Vec::with_capacity(cols_len);
+                    for c in merge.columns.iter().take(cols_len) {
+                        schema.index_of(c.name())?;
+                        columns.push(c.clone());
+                    }
+
+                    Ok(Some(columns))
+                }
+                None => Ok(Some(merge.columns.clone())),
+            }
+        } else if let Some(aliased) = node.as_any().downcast_ref::<FilterExec>() {
+            self.merge_sort_node_sorted_on(aliased.children()[0].clone(), projection)
+        } else if let Some(aliased) =
+            node.as_any().downcast_ref::<LastRowByUniqueKeyExec>()
+        {
+            self.merge_sort_node_sorted_on(aliased.children()[0].clone(), projection)
+        } else if let Some(aliased) = node.as_any().downcast_ref::<ProjectionExec>() {
+            self.merge_sort_node_sorted_on(
+                aliased.children()[0].clone(),
+                projection.or(Some(aliased.schema().clone())),
+            )
+        } else {
+            Ok(None)
         }
     }
 
