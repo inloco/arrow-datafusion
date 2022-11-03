@@ -675,8 +675,6 @@ impl DefaultPhysicalPlanner {
                 let sorted_on = physical_plans
                     .iter()
                     .map(|p| self.merge_sort_node_sorted_on(p.clone(), None))
-                    .collect::<Result<Vec<_>>>()?
-                    .into_iter()
                     .unique()
                     .collect::<Vec<_>>();
 
@@ -967,20 +965,22 @@ impl DefaultPhysicalPlanner {
         &self,
         node: Arc<dyn ExecutionPlan>,
         projection: Option<SchemaRef>,
-    ) -> Result<Option<Vec<Column>>> {
+    ) -> Option<Vec<Column>> {
         if let Some(merge) = node.as_any().downcast_ref::<MergeSortExec>() {
             match projection {
                 Some(schema) => {
                     let cols_len = schema.fields().len();
                     let mut columns = Vec::with_capacity(cols_len);
                     for c in merge.columns.iter().take(cols_len) {
-                        schema.index_of(c.name())?;
+                        if schema.index_of(c.name()).is_err() {
+                            return None;
+                        }
                         columns.push(c.clone());
                     }
 
-                    Ok(Some(columns))
+                    Some(columns)
                 }
-                None => Ok(Some(merge.columns.clone())),
+                None => Some(merge.columns.clone()),
             }
         } else if let Some(aliased) = node.as_any().downcast_ref::<FilterExec>() {
             self.merge_sort_node_sorted_on(aliased.children()[0].clone(), projection)
@@ -994,7 +994,7 @@ impl DefaultPhysicalPlanner {
                 projection.or(Some(aliased.schema().clone())),
             )
         } else {
-            Ok(None)
+            None
         }
     }
 
