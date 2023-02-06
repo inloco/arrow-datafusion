@@ -392,6 +392,7 @@ impl Stream for MergeSortStream {
     }
 }
 
+#[tracing::instrument(level = "trace", skip(batches, columns, max_batch_rows))]
 fn merge_sort(
     batches: &[(usize, &RecordBatch)],
     columns: &[Column],
@@ -666,6 +667,7 @@ impl LastRowByUniqueKeyExecStream {
         true
     }
 
+    #[tracing::instrument(level = "trace", skip(self, next_batch))]
     fn keep_only_last_rows_by_key(
         &mut self,
         next_batch: Option<RecordBatch>,

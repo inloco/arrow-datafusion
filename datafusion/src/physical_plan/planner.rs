@@ -972,13 +972,18 @@ impl DefaultPhysicalPlanner {
                     let cols_len = schema.fields().len();
                     let mut columns = Vec::with_capacity(cols_len);
                     for c in merge.columns.iter().take(cols_len) {
-                        if schema.index_of(c.name()).is_err() {
-                            return None;
+                        if let Some(ind) = schema.index_of(c.name()).ok() {
+                            columns.push(Column::new(c.name(), ind));
+                        } else {
+                            break;
                         }
-                        columns.push(c.clone());
                     }
 
-                    Some(columns)
+                    if columns.is_empty() {
+                        None
+                    } else {
+                        Some(columns)
+                    }
                 }
                 None => Some(merge.columns.clone()),
             }

@@ -84,7 +84,7 @@ pub async fn collect(stream: SendableRecordBatchStream) -> Result<Vec<RecordBatc
 
 /// Combine a slice of record batches into one, or returns None if the slice itself
 /// is empty; all the record batches inside the slice must be of the same schema.
-pub(crate) fn combine_batches(
+pub fn combine_batches(
     batches: &[RecordBatch],
     schema: SchemaRef,
 ) -> ArrowResult<Option<RecordBatch>> {

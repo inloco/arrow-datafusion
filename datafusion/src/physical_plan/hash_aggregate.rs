@@ -754,6 +754,7 @@ pub(crate) fn create_key(
     Ok(())
 }
 
+#[tracing::instrument(level = "trace", skip(schema, group_expr, aggr_expr, input))]
 async fn compute_grouped_hash_aggregate(
     mode: AggregateMode,
     schema: SchemaRef,
@@ -979,6 +980,7 @@ pin_project! {
     }
 }
 
+#[tracing::instrument(level = "trace", skip(mode, schema, aggr_expr, input))]
 async fn compute_hash_aggregate(
     mode: AggregateMode,
     schema: SchemaRef,
@@ -1527,6 +1529,7 @@ pub fn create_group_by_values(
     Ok(())
 }
 
+#[tracing::instrument(level = "trace", skip(schema, group_expr, aggr_expr, input))]
 async fn compute_grouped_sorted_aggregate(
     mode: AggregateMode,
     schema: SchemaRef,

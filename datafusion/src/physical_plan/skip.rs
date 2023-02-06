@@ -153,7 +153,7 @@ impl SkipStream {
     }
 }
 
-fn skip_first_rows(batch: &RecordBatch, n: usize) -> RecordBatch {
+pub fn skip_first_rows(batch: &RecordBatch, n: usize) -> RecordBatch {
     let sliced_columns: Vec<ArrayRef> = batch
         .columns()
         .iter()

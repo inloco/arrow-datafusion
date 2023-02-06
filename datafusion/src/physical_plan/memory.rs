@@ -163,6 +163,7 @@ impl MemoryStream {
 impl Stream for MemoryStream {
     type Item = ArrowResult<RecordBatch>;
 
+    #[tracing::instrument(level = "trace", skip(self))]
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         _: &mut Context<'_>,

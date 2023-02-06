@@ -410,6 +410,7 @@ impl ExecutionPlan for RollingWindowAggExec {
         }))
     }
 
+    #[tracing::instrument(level = "trace", skip(self))]
     async fn execute(
         &self,
         partition: usize,

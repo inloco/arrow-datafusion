@@ -197,6 +197,7 @@ impl ExecutionPlan for SortExec {
     // }
 }
 
+#[tracing::instrument(level = "trace", skip(batch, schema, expr))]
 fn sort_batch(
     batch: RecordBatch,
     schema: SchemaRef,

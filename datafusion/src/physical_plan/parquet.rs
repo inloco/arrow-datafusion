@@ -810,6 +810,10 @@ fn build_row_group_predicate(
     }
 }
 
+#[tracing::instrument(
+    level = "trace",
+    skip(metrics, predicate_builder, response_tx, metadata_cache)
+)]
 fn read_files(
     filenames: &[String],
     metrics: ParquetPartitionMetrics,
@@ -835,10 +839,17 @@ fn read_files(
         let mut batch_reader = arrow_reader
             .get_record_reader_by_columns(projection.to_owned(), batch_size)?;
         loop {
-            match batch_reader.next() {
+            let span = tracing::trace_span!("parquet read batch");
+            let batch = span.in_scope(|| batch_reader.next());
+            match batch {
                 Some(Ok(batch)) => {
                     total_rows += batch.num_rows();
-                    send_result(&response_tx, Ok(batch))?;
+                    let send_span = tracing::trace_span!(
+                        "parquet send result",
+                        batch_rows = batch.num_rows(),
+                        total_rows = total_rows
+                    );
+                    send_span.in_scope(|| send_result(&response_tx, Ok(batch)))?;
                     if limit.map(|l| total_rows >= l).unwrap_or(false) {
                         break 'outer;
                     }

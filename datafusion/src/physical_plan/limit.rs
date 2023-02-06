@@ -224,6 +224,7 @@ impl ExecutionPlan for LocalLimitExec {
 }
 
 /// Truncate a RecordBatch to maximum of n rows
+#[tracing::instrument(level = "trace", skip(batch))]
 pub fn truncate_batch(batch: &RecordBatch, n: usize) -> RecordBatch {
     let limited_columns: Vec<ArrayRef> = (0..batch.num_columns())
         .map(|i| limit(batch.column(i), n))
