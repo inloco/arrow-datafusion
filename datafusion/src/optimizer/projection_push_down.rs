@@ -22,8 +22,8 @@ use crate::cube_ext::alias::LogicalAlias;
 use crate::error::{DataFusionError, Result};
 use crate::execution::context::ExecutionProps;
 use crate::logical_plan::{
-    build_join_schema, Column, DFField, DFSchema, DFSchemaRef, Expr, LogicalPlan,
-    LogicalPlanBuilder, ToDFSchema,
+    build_join_schema, exprlist_to_fields, Column, DFField, DFSchema, DFSchemaRef, Expr,
+    LogicalPlan, LogicalPlanBuilder, ToDFSchema,
 };
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
@@ -307,25 +307,21 @@ fn optimize_plan(
                 }
             })?;
 
-            let new_schema = DFSchema::new(
-                schema
-                    .fields()
-                    .iter()
-                    .filter(|x| new_required_columns.contains(&x.qualified_column()))
-                    .cloned()
-                    .collect(),
-            )?;
+            let new_input = Arc::new(optimize_plan(
+                optimizer,
+                input,
+                &new_required_columns,
+                true,
+                execution_props,
+            )?);
+            let all_expr = group_expr.iter().chain(aggr_expr.iter());
+            let new_schema =
+                DFSchema::new(exprlist_to_fields(all_expr, new_input.schema())?)?;
 
             Ok(LogicalPlan::Aggregate {
                 group_expr: group_expr.clone(),
                 aggr_expr: new_aggr_expr,
-                input: Arc::new(optimize_plan(
-                    optimizer,
-                    input,
-                    &new_required_columns,
-                    true,
-                    execution_props,
-                )?),
+                input: new_input,
                 schema: DFSchemaRef::new(new_schema),
             })
         }
