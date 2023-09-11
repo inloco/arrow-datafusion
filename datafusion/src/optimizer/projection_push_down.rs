@@ -314,7 +314,7 @@ fn optimize_plan(
                 true,
                 execution_props,
             )?);
-            let all_expr = group_expr.iter().chain(aggr_expr.iter());
+            let all_expr = group_expr.iter().chain(new_aggr_expr.iter());
             let new_schema =
                 DFSchema::new(exprlist_to_fields(all_expr, new_input.schema())?)?;
 
