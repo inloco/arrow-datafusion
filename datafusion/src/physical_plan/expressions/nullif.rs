@@ -50,6 +50,7 @@ macro_rules! primitive_bool_array_op {
             DataType::Int16 => compute_bool_array_op!($LEFT, $RIGHT, $OP, Int16Array),
             DataType::Int32 => compute_bool_array_op!($LEFT, $RIGHT, $OP, Int32Array),
             DataType::Int64 => compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Array),
+            DataType::Int96 => compute_bool_array_op!($LEFT, $RIGHT, $OP, Int96Array),
             DataType::Int64Decimal(0) => {
                 compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Decimal0Array)
             }
@@ -70,6 +71,27 @@ macro_rules! primitive_bool_array_op {
             }
             DataType::Int64Decimal(10) => {
                 compute_bool_array_op!($LEFT, $RIGHT, $OP, Int64Decimal10Array)
+            }
+            DataType::Int96Decimal(0) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int96Decimal0Array)
+            }
+            DataType::Int96Decimal(1) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int96Decimal1Array)
+            }
+            DataType::Int96Decimal(2) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int96Decimal2Array)
+            }
+            DataType::Int96Decimal(3) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int96Decimal3Array)
+            }
+            DataType::Int96Decimal(4) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int96Decimal4Array)
+            }
+            DataType::Int96Decimal(5) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int96Decimal5Array)
+            }
+            DataType::Int96Decimal(10) => {
+                compute_bool_array_op!($LEFT, $RIGHT, $OP, Int96Decimal10Array)
             }
             DataType::UInt8 => compute_bool_array_op!($LEFT, $RIGHT, $OP, UInt8Array),
             DataType::UInt16 => compute_bool_array_op!($LEFT, $RIGHT, $OP, UInt16Array),
@@ -134,6 +156,7 @@ pub static SUPPORTED_NULLIF_TYPES: &[DataType] = &[
     DataType::Int16,
     DataType::Int32,
     DataType::Int64,
+    DataType::Int96,
     DataType::Int64Decimal(0),
     DataType::Int64Decimal(1),
     DataType::Int64Decimal(2),
@@ -141,6 +164,13 @@ pub static SUPPORTED_NULLIF_TYPES: &[DataType] = &[
     DataType::Int64Decimal(4),
     DataType::Int64Decimal(5),
     DataType::Int64Decimal(10),
+    DataType::Int96Decimal(0),
+    DataType::Int96Decimal(1),
+    DataType::Int96Decimal(2),
+    DataType::Int96Decimal(3),
+    DataType::Int96Decimal(4),
+    DataType::Int96Decimal(5),
+    DataType::Int96Decimal(10),
     DataType::Float32,
     DataType::Float64,
 ];

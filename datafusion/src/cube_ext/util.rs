@@ -41,6 +41,9 @@ macro_rules! cube_match_array {
             DataType::Int64 => {
                 ($matcher!(a, Int64Array, PrimitiveBuilder<Int64Type>, Int64))
             }
+            DataType::Int96 => {
+                ($matcher!(a, Int96Array, PrimitiveBuilder<Int96Type>, Int96))
+            }
             DataType::UInt8 => {
                 ($matcher!(a, UInt8Array, PrimitiveBuilder<UInt8Type>, UInt8))
             }
@@ -164,6 +167,34 @@ macro_rules! cube_match_array {
                 ))
             }
             DataType::Int64Decimal(_) => panic!("unsupported scale for decimal"),
+            DataType::Int96Decimal(0) => {
+                ($matcher!(a, Int96Decimal0Array, Int96Decimal0Builder, Int96Decimal, 0))
+            }
+            DataType::Int96Decimal(1) => {
+                ($matcher!(a, Int96Decimal1Array, Int96Decimal1Builder, Int96Decimal, 1))
+            }
+            DataType::Int96Decimal(2) => {
+                ($matcher!(a, Int96Decimal2Array, Int96Decimal2Builder, Int96Decimal, 2))
+            }
+            DataType::Int96Decimal(3) => {
+                ($matcher!(a, Int96Decimal3Array, Int96Decimal3Builder, Int96Decimal, 3))
+            }
+            DataType::Int96Decimal(4) => {
+                ($matcher!(a, Int96Decimal4Array, Int96Decimal4Builder, Int96Decimal, 4))
+            }
+            DataType::Int96Decimal(5) => {
+                ($matcher!(a, Int96Decimal5Array, Int96Decimal5Builder, Int96Decimal, 5))
+            }
+            DataType::Int96Decimal(10) => {
+                ($matcher!(
+                    a,
+                    Int96Decimal10Array,
+                    Int96Decimal10Builder,
+                    Int96Decimal,
+                    10
+                ))
+            }
+            DataType::Int96Decimal(_) => panic!("unsupported scale for decimal"),
         }
     }};
 }
@@ -183,6 +214,7 @@ macro_rules! cube_match_scalar {
             ScalarValue::Int16(v) => ($matcher!($($arg ,)* v, Int16Builder)),
             ScalarValue::Int32(v) => ($matcher!($($arg ,)* v, Int32Builder)),
             ScalarValue::Int64(v) => ($matcher!($($arg ,)* v, Int64Builder)),
+            ScalarValue::Int96(v) => ($matcher!($($arg ,)* v, Int96Builder)),
             ScalarValue::Int64Decimal(v, 0) => ($matcher!($($arg ,)* v, Int64Decimal0Builder)),
             ScalarValue::Int64Decimal(v, 1) => ($matcher!($($arg ,)* v, Int64Decimal1Builder)),
             ScalarValue::Int64Decimal(v, 2) => ($matcher!($($arg ,)* v, Int64Decimal2Builder)),
@@ -191,6 +223,16 @@ macro_rules! cube_match_scalar {
             ScalarValue::Int64Decimal(v, 5) => ($matcher!($($arg ,)* v, Int64Decimal5Builder)),
             ScalarValue::Int64Decimal(v, 10) => ($matcher!($($arg ,)* v, Int64Decimal10Builder)),
             ScalarValue::Int64Decimal(v, scale) => {
+                panic!("unhandled scale for decimal: {}", scale)
+            }
+            ScalarValue::Int96Decimal(v, 0) => ($matcher!($($arg ,)* v, Int96Decimal0Builder)),
+            ScalarValue::Int96Decimal(v, 1) => ($matcher!($($arg ,)* v, Int96Decimal1Builder)),
+            ScalarValue::Int96Decimal(v, 2) => ($matcher!($($arg ,)* v, Int96Decimal2Builder)),
+            ScalarValue::Int96Decimal(v, 3) => ($matcher!($($arg ,)* v, Int96Decimal3Builder)),
+            ScalarValue::Int96Decimal(v, 4) => ($matcher!($($arg ,)* v, Int96Decimal4Builder)),
+            ScalarValue::Int96Decimal(v, 5) => ($matcher!($($arg ,)* v, Int96Decimal5Builder)),
+            ScalarValue::Int96Decimal(v, 10) => ($matcher!($($arg ,)* v, Int96Decimal10Builder)),
+            ScalarValue::Int96Decimal(v, scale) => {
                 panic!("unhandled scale for decimal: {}", scale)
             }
             ScalarValue::UInt8(v) => ($matcher!($($arg ,)* v, UInt8Builder)),
@@ -258,9 +300,17 @@ pub fn cmp_same_types(
         (ScalarValue::Int16(Some(l)), ScalarValue::Int16(Some(r))) => l.cmp(r),
         (ScalarValue::Int32(Some(l)), ScalarValue::Int32(Some(r))) => l.cmp(r),
         (ScalarValue::Int64(Some(l)), ScalarValue::Int64(Some(r))) => l.cmp(r),
+        (ScalarValue::Int96(Some(l)), ScalarValue::Int96(Some(r))) => l.cmp(r),
         (
             ScalarValue::Int64Decimal(Some(l), lscale),
             ScalarValue::Int64Decimal(Some(r), rscale),
+        ) => {
+            assert_eq!(lscale, rscale);
+            l.cmp(r)
+        }
+        (
+            ScalarValue::Int96Decimal(Some(l), lscale),
+            ScalarValue::Int96Decimal(Some(r), rscale),
         ) => {
             assert_eq!(lscale, rscale);
             l.cmp(r)

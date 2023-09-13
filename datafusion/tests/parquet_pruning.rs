@@ -41,51 +41,80 @@ use hashbrown::HashMap;
 use parquet::{arrow::ArrowWriter, file::properties::WriterProperties};
 use tempfile::NamedTempFile;
 
-#[tokio::test]
-async fn prune_timestamps_nanos() {
-    let output = ContextWithParquet::new(Scenario::Timestamps)
-        .await
-        .query("SELECT * FROM t where nanos < to_timestamp('2020-01-02 01:01:11Z')")
-        .await;
-    println!("{}", output.description());
-    // This should prune one metrics without error
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(1));
-    assert_eq!(output.result_rows, 10, "{}", output.description());
+#[test]
+fn prune_timestamps_nanos() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let output = ContextWithParquet::new(Scenario::Timestamps)
+                .await
+                .query(
+                    "SELECT * FROM t where nanos < to_timestamp('2020-01-02 01:01:11Z')",
+                )
+                .await;
+            println!("{}", output.description());
+            // This should prune one metrics without error
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(1));
+            assert_eq!(output.result_rows, 10, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_timestamps_micros() {
-    let output = ContextWithParquet::new(Scenario::Timestamps)
+#[test]
+fn prune_timestamps_micros() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let output = ContextWithParquet::new(Scenario::Timestamps)
         .await
         .query(
             "SELECT * FROM t where micros < to_timestamp_micros('2020-01-02 01:01:11Z')",
         )
         .await;
-    println!("{}", output.description());
-    // This should prune one metrics without error
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(1));
-    assert_eq!(output.result_rows, 10, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune one metrics without error
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(1));
+            assert_eq!(output.result_rows, 10, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_timestamps_millis() {
-    let output = ContextWithParquet::new(Scenario::Timestamps)
+#[test]
+fn prune_timestamps_millis() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let output = ContextWithParquet::new(Scenario::Timestamps)
         .await
         .query(
             "SELECT * FROM t where millis < to_timestamp_millis('2020-01-02 01:01:11Z')",
         )
         .await;
-    println!("{}", output.description());
-    // This should prune one metrics without error
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(1));
-    assert_eq!(output.result_rows, 10, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune one metrics without error
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(1));
+            assert_eq!(output.result_rows, 10, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_timestamps_seconds() {
+#[test]
+fn prune_timestamps_seconds() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
     let output = ContextWithParquet::new(Scenario::Timestamps)
         .await
         .query(
@@ -97,309 +126,409 @@ async fn prune_timestamps_seconds() {
     assert_eq!(output.predicate_evaluation_errors(), Some(0));
     assert_eq!(output.row_groups_pruned(), Some(1));
     assert_eq!(output.result_rows, 10, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_date32() {
-    let output = ContextWithParquet::new(Scenario::Dates)
-        .await
-        .query("SELECT * FROM t where date32 < cast('2020-01-02' as date)")
-        .await;
-    println!("{}", output.description());
-    // This should prune out groups  without error
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(3));
-    assert_eq!(output.result_rows, 1, "{}", output.description());
-}
-
-#[tokio::test]
-async fn prune_date64() {
-    // work around for not being able to cast Date32 to Date64 automatically
-    let date = "2020-01-02"
-        .parse::<chrono::NaiveDate>()
+#[test]
+fn prune_date32() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
         .unwrap()
-        .and_time(chrono::NaiveTime::from_hms(0, 0, 0));
-    let date = ScalarValue::Date64(Some(date.timestamp_millis()));
-
-    let output = ContextWithParquet::new(Scenario::Dates)
-        .await
-        .query_with_expr(col("date64").lt(lit(date)))
-        // .query(
-        //     "SELECT * FROM t where date64 < caste('2020-01-02' as date)",
-        // query results in Plan("'Date64 < Date32' can't be evaluated because there isn't a common type to coerce the types to")
-        // )
-        .await;
-
-    println!("{}", output.description());
-    // This should prune out groups  without error
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(3));
-    assert_eq!(output.result_rows, 1, "{}", output.description());
+        .block_on(async {
+            let output = ContextWithParquet::new(Scenario::Dates)
+                .await
+                .query("SELECT * FROM t where date32 < cast('2020-01-02' as date)")
+                .await;
+            println!("{}", output.description());
+            // This should prune out groups  without error
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(3));
+            assert_eq!(output.result_rows, 1, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_disabled() {
-    let query = "SELECT * FROM t where nanos < to_timestamp('2020-01-02 01:01:11Z')";
-    let expected_rows = 10;
+#[test]
+fn prune_date64() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // work around for not being able to cast Date32 to Date64 automatically
+            let date = "2020-01-02"
+                .parse::<chrono::NaiveDate>()
+                .unwrap()
+                .and_time(chrono::NaiveTime::from_hms(0, 0, 0));
+            let date = ScalarValue::Date64(Some(date.timestamp_millis()));
 
-    // with pruning
-    let output = ContextWithParquet::new(Scenario::Timestamps)
-        .await
-        .query(query)
-        .await;
+            let output = ContextWithParquet::new(Scenario::Dates)
+                .await
+                .query_with_expr(col("date64").lt(lit(date)))
+                // .query(
+                //     "SELECT * FROM t where date64 < caste('2020-01-02' as date)",
+                // query results in Plan("'Date64 < Date32' can't be evaluated because there isn't a common type to coerce the types to")
+                // )
+                .await;
 
-    // This should prune one without error
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(1));
-    assert_eq!(
-        output.result_rows,
-        expected_rows,
-        "{}",
-        output.description()
-    );
-
-    // same query, without pruning
-    let config = ExecutionConfig::new().with_parquet_pruning(false);
-
-    let output = ContextWithParquet::with_config(Scenario::Timestamps, config)
-        .await
-        .query(query)
-        .await;
-    println!("{}", output.description());
-
-    // This should not prune any
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(0));
-    assert_eq!(
-        output.result_rows,
-        expected_rows,
-        "{}",
-        output.description()
-    );
+            println!("{}", output.description());
+            // This should prune out groups  without error
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(3));
+            assert_eq!(output.result_rows, 1, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_int32_lt() {
-    let (expected_errors, expected_row_group_pruned, expected_results) =
-        (Some(0), Some(1), 11);
+#[test]
+fn prune_disabled() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let query =
+                "SELECT * FROM t where nanos < to_timestamp('2020-01-02 01:01:11Z')";
+            let expected_rows = 10;
 
-    // resulrt of sql "SELECT * FROM t where i < 1" is same as
-    // "SELECT * FROM t where -i > -1"
-    let output = ContextWithParquet::new(Scenario::Int32)
-        .await
-        .query("SELECT * FROM t where i < 1")
-        .await;
+            // with pruning
+            let output = ContextWithParquet::new(Scenario::Timestamps)
+                .await
+                .query(query)
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups without error
-    assert_eq!(output.predicate_evaluation_errors(), expected_errors);
-    assert_eq!(output.row_groups_pruned(), expected_row_group_pruned);
-    assert_eq!(
-        output.result_rows,
-        expected_results,
-        "{}",
-        output.description()
-    );
+            // This should prune one without error
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(1));
+            assert_eq!(
+                output.result_rows,
+                expected_rows,
+                "{}",
+                output.description()
+            );
 
-    let output = ContextWithParquet::new(Scenario::Int32)
-        .await
-        .query("SELECT * FROM t where -i > -1")
-        .await;
+            // same query, without pruning
+            let config = ExecutionConfig::new().with_parquet_pruning(false);
 
-    println!("{}", output.description());
-    // This should prune out groups without error
-    assert_eq!(output.predicate_evaluation_errors(), expected_errors);
-    assert_eq!(output.row_groups_pruned(), expected_row_group_pruned);
-    assert_eq!(
-        output.result_rows,
-        expected_results,
-        "{}",
-        output.description()
-    );
+            let output = ContextWithParquet::with_config(Scenario::Timestamps, config)
+                .await
+                .query(query)
+                .await;
+            println!("{}", output.description());
+
+            // This should not prune any
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(0));
+            assert_eq!(
+                output.result_rows,
+                expected_rows,
+                "{}",
+                output.description()
+            );
+        })
 }
 
-#[tokio::test]
-async fn prune_int32_eq() {
-    // resulrt of sql "SELECT * FROM t where i = 1"
-    let output = ContextWithParquet::new(Scenario::Int32)
-        .await
-        .query("SELECT * FROM t where i = 1")
-        .await;
+#[test]
+fn prune_int32_lt() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (expected_errors, expected_row_group_pruned, expected_results) =
+                (Some(0), Some(1), 11);
 
-    println!("{}", output.description());
-    // This should prune out groups without error
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(3));
-    assert_eq!(output.result_rows, 1, "{}", output.description());
+            // resulrt of sql "SELECT * FROM t where i < 1" is same as
+            // "SELECT * FROM t where -i > -1"
+            let output = ContextWithParquet::new(Scenario::Int32)
+                .await
+                .query("SELECT * FROM t where i < 1")
+                .await;
+
+            println!("{}", output.description());
+            // This should prune out groups without error
+            assert_eq!(output.predicate_evaluation_errors(), expected_errors);
+            assert_eq!(output.row_groups_pruned(), expected_row_group_pruned);
+            assert_eq!(
+                output.result_rows,
+                expected_results,
+                "{}",
+                output.description()
+            );
+
+            let output = ContextWithParquet::new(Scenario::Int32)
+                .await
+                .query("SELECT * FROM t where -i > -1")
+                .await;
+
+            println!("{}", output.description());
+            // This should prune out groups without error
+            assert_eq!(output.predicate_evaluation_errors(), expected_errors);
+            assert_eq!(output.row_groups_pruned(), expected_row_group_pruned);
+            assert_eq!(
+                output.result_rows,
+                expected_results,
+                "{}",
+                output.description()
+            );
+        })
 }
 
-#[tokio::test]
+#[test]
+fn prune_int32_eq() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // resulrt of sql "SELECT * FROM t where i = 1"
+            let output = ContextWithParquet::new(Scenario::Int32)
+                .await
+                .query("SELECT * FROM t where i = 1")
+                .await;
+
+            println!("{}", output.description());
+            // This should prune out groups without error
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(3));
+            assert_eq!(output.result_rows, 1, "{}", output.description());
+        })
+}
+
+#[test]
 #[ignore = "Mysteriously fails in CubeStore"]
-async fn prune_int32_scalar_fun_and_eq() {
-    // resulrt of sql "SELECT * FROM t where abs(i) = 1 and i = 1"
-    // only use "i = 1" to prune
-    let output = ContextWithParquet::new(Scenario::Int32)
-        .await
-        .query("SELECT * FROM t where abs(i) = 1  and i = 1")
-        .await;
+fn prune_int32_scalar_fun_and_eq() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // resulrt of sql "SELECT * FROM t where abs(i) = 1 and i = 1"
+            // only use "i = 1" to prune
+            let output = ContextWithParquet::new(Scenario::Int32)
+                .await
+                .query("SELECT * FROM t where abs(i) = 1  and i = 1")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups without error
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(3));
-    assert_eq!(output.result_rows, 1, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune out groups without error
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(3));
+            assert_eq!(output.result_rows, 1, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_int32_scalar_fun() {
-    // resulrt of sql "SELECT * FROM t where abs(i) = 1" is not supported
-    let output = ContextWithParquet::new(Scenario::Int32)
-        .await
-        .query("SELECT * FROM t where abs(i) = 1")
-        .await;
+#[test]
+fn prune_int32_scalar_fun() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // resulrt of sql "SELECT * FROM t where abs(i) = 1" is not supported
+            let output = ContextWithParquet::new(Scenario::Int32)
+                .await
+                .query("SELECT * FROM t where abs(i) = 1")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups with error, because there is not col to
-    // prune the row groups.
-    assert_eq!(output.predicate_evaluation_errors(), Some(1));
-    assert_eq!(output.row_groups_pruned(), Some(0));
-    assert_eq!(output.result_rows, 3, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune out groups with error, because there is not col to
+            // prune the row groups.
+            assert_eq!(output.predicate_evaluation_errors(), Some(1));
+            assert_eq!(output.row_groups_pruned(), Some(0));
+            assert_eq!(output.result_rows, 3, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_int32_complex_expr() {
-    // resulrt of sql "SELECT * FROM t where i+1 = 1" is not supported
-    let output = ContextWithParquet::new(Scenario::Int32)
-        .await
-        .query("SELECT * FROM t where i+1 = 1")
-        .await;
+#[test]
+fn prune_int32_complex_expr() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // resulrt of sql "SELECT * FROM t where i+1 = 1" is not supported
+            let output = ContextWithParquet::new(Scenario::Int32)
+                .await
+                .query("SELECT * FROM t where i+1 = 1")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups with error, because there is not col to
-    // prune the row groups.
-    assert_eq!(output.predicate_evaluation_errors(), Some(1));
-    assert_eq!(output.row_groups_pruned(), Some(0));
-    assert_eq!(output.result_rows, 2, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune out groups with error, because there is not col to
+            // prune the row groups.
+            assert_eq!(output.predicate_evaluation_errors(), Some(1));
+            assert_eq!(output.row_groups_pruned(), Some(0));
+            assert_eq!(output.result_rows, 2, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_int32_complex_expr_subtract() {
-    // resulrt of sql "SELECT * FROM t where 1-i > 1" is not supported
-    let output = ContextWithParquet::new(Scenario::Int32)
-        .await
-        .query("SELECT * FROM t where 1-i > 1")
-        .await;
+#[test]
+fn prune_int32_complex_expr_subtract() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // resulrt of sql "SELECT * FROM t where 1-i > 1" is not supported
+            let output = ContextWithParquet::new(Scenario::Int32)
+                .await
+                .query("SELECT * FROM t where 1-i > 1")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups with error, because there is not col to
-    // prune the row groups.
-    assert_eq!(output.predicate_evaluation_errors(), Some(1));
-    assert_eq!(output.row_groups_pruned(), Some(0));
-    assert_eq!(output.result_rows, 9, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune out groups with error, because there is not col to
+            // prune the row groups.
+            assert_eq!(output.predicate_evaluation_errors(), Some(1));
+            assert_eq!(output.row_groups_pruned(), Some(0));
+            assert_eq!(output.result_rows, 9, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_f64_lt() {
-    let (expected_errors, expected_row_group_pruned, expected_results) =
-        (Some(0), Some(1), 11);
+#[test]
+fn prune_f64_lt() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (expected_errors, expected_row_group_pruned, expected_results) =
+                (Some(0), Some(1), 11);
 
-    // resulrt of sql "SELECT * FROM t where i < 1" is same as
-    // "SELECT * FROM t where -i > -1"
-    let output = ContextWithParquet::new(Scenario::Float64)
-        .await
-        .query("SELECT * FROM t where f < 1")
-        .await;
+            // resulrt of sql "SELECT * FROM t where i < 1" is same as
+            // "SELECT * FROM t where -i > -1"
+            let output = ContextWithParquet::new(Scenario::Float64)
+                .await
+                .query("SELECT * FROM t where f < 1")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups without error
-    assert_eq!(output.predicate_evaluation_errors(), expected_errors);
-    assert_eq!(output.row_groups_pruned(), expected_row_group_pruned);
-    assert_eq!(
-        output.result_rows,
-        expected_results,
-        "{}",
-        output.description()
-    );
+            println!("{}", output.description());
+            // This should prune out groups without error
+            assert_eq!(output.predicate_evaluation_errors(), expected_errors);
+            assert_eq!(output.row_groups_pruned(), expected_row_group_pruned);
+            assert_eq!(
+                output.result_rows,
+                expected_results,
+                "{}",
+                output.description()
+            );
 
-    let output = ContextWithParquet::new(Scenario::Float64)
-        .await
-        .query("SELECT * FROM t where -f > -1")
-        .await;
+            let output = ContextWithParquet::new(Scenario::Float64)
+                .await
+                .query("SELECT * FROM t where -f > -1")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups without error
-    assert_eq!(output.predicate_evaluation_errors(), expected_errors);
-    assert_eq!(output.row_groups_pruned(), expected_row_group_pruned);
-    assert_eq!(
-        output.result_rows,
-        expected_results,
-        "{}",
-        output.description()
-    );
+            println!("{}", output.description());
+            // This should prune out groups without error
+            assert_eq!(output.predicate_evaluation_errors(), expected_errors);
+            assert_eq!(output.row_groups_pruned(), expected_row_group_pruned);
+            assert_eq!(
+                output.result_rows,
+                expected_results,
+                "{}",
+                output.description()
+            );
+        })
 }
 
-#[tokio::test]
-async fn prune_f64_scalar_fun_and_gt() {
-    // resulrt of sql "SELECT * FROM t where abs(f - 1) <= 0.000001  and f >= 0.1"
-    // only use "f >= 0" to prune
-    let output = ContextWithParquet::new(Scenario::Float64)
-        .await
-        .query("SELECT * FROM t where abs(f - 1) <= 0.000001  and f >= 0.1")
-        .await;
+#[test]
+fn prune_f64_scalar_fun_and_gt() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // resulrt of sql "SELECT * FROM t where abs(f - 1) <= 0.000001  and f >= 0.1"
+            // only use "f >= 0" to prune
+            let output = ContextWithParquet::new(Scenario::Float64)
+                .await
+                .query("SELECT * FROM t where abs(f - 1) <= 0.000001  and f >= 0.1")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups without error
-    assert_eq!(output.predicate_evaluation_errors(), Some(0));
-    assert_eq!(output.row_groups_pruned(), Some(2));
-    assert_eq!(output.result_rows, 1, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune out groups without error
+            assert_eq!(output.predicate_evaluation_errors(), Some(0));
+            assert_eq!(output.row_groups_pruned(), Some(2));
+            assert_eq!(output.result_rows, 1, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_f64_scalar_fun() {
-    // resulrt of sql "SELECT * FROM t where abs(f-1) <= 0.000001" is not supported
-    let output = ContextWithParquet::new(Scenario::Float64)
-        .await
-        .query("SELECT * FROM t where abs(f-1) <= 0.000001")
-        .await;
+#[test]
+fn prune_f64_scalar_fun() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // resulrt of sql "SELECT * FROM t where abs(f-1) <= 0.000001" is not supported
+            let output = ContextWithParquet::new(Scenario::Float64)
+                .await
+                .query("SELECT * FROM t where abs(f-1) <= 0.000001")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups with error, because there is not col to
-    // prune the row groups.
-    assert_eq!(output.predicate_evaluation_errors(), Some(1));
-    assert_eq!(output.row_groups_pruned(), Some(0));
-    assert_eq!(output.result_rows, 1, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune out groups with error, because there is not col to
+            // prune the row groups.
+            assert_eq!(output.predicate_evaluation_errors(), Some(1));
+            assert_eq!(output.row_groups_pruned(), Some(0));
+            assert_eq!(output.result_rows, 1, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_f64_complex_expr() {
-    // resulrt of sql "SELECT * FROM t where f+1 > 1.1"" is not supported
-    let output = ContextWithParquet::new(Scenario::Float64)
-        .await
-        .query("SELECT * FROM t where f+1 > 1.1")
-        .await;
+#[test]
+fn prune_f64_complex_expr() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // resulrt of sql "SELECT * FROM t where f+1 > 1.1"" is not supported
+            let output = ContextWithParquet::new(Scenario::Float64)
+                .await
+                .query("SELECT * FROM t where f+1 > 1.1")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups with error, because there is not col to
-    // prune the row groups.
-    assert_eq!(output.predicate_evaluation_errors(), Some(1));
-    assert_eq!(output.row_groups_pruned(), Some(0));
-    assert_eq!(output.result_rows, 9, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune out groups with error, because there is not col to
+            // prune the row groups.
+            assert_eq!(output.predicate_evaluation_errors(), Some(1));
+            assert_eq!(output.row_groups_pruned(), Some(0));
+            assert_eq!(output.result_rows, 9, "{}", output.description());
+        })
 }
 
-#[tokio::test]
-async fn prune_f64_complex_expr_subtract() {
-    // resulrt of sql "SELECT * FROM t where 1-f > 1" is not supported
-    let output = ContextWithParquet::new(Scenario::Float64)
-        .await
-        .query("SELECT * FROM t where 1-f > 1")
-        .await;
+#[test]
+fn prune_f64_complex_expr_subtract() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // resulrt of sql "SELECT * FROM t where 1-f > 1" is not supported
+            let output = ContextWithParquet::new(Scenario::Float64)
+                .await
+                .query("SELECT * FROM t where 1-f > 1")
+                .await;
 
-    println!("{}", output.description());
-    // This should prune out groups with error, because there is not col to
-    // prune the row groups.
-    assert_eq!(output.predicate_evaluation_errors(), Some(1));
-    assert_eq!(output.row_groups_pruned(), Some(0));
-    assert_eq!(output.result_rows, 9, "{}", output.description());
+            println!("{}", output.description());
+            // This should prune out groups with error, because there is not col to
+            // prune the row groups.
+            assert_eq!(output.predicate_evaluation_errors(), Some(1));
+            assert_eq!(output.row_groups_pruned(), Some(0));
+            assert_eq!(output.result_rows, 9, "{}", output.description());
+        })
 }
 
 // ----------------------

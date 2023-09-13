@@ -181,19 +181,32 @@ pub fn can_coerce_from(type_into: &DataType, type_from: &DataType) -> bool {
             type_from,
             Int8 | Int16 | Int32 | Int64 | UInt8 | UInt16 | UInt32
         ),
+        Int96 => matches!(
+            type_from,
+            Int8 | Int16 | Int32 | Int64 | Int96 | UInt8 | UInt16 | UInt32
+        ),
         UInt8 => matches!(type_from, UInt8),
         UInt16 => matches!(type_from, UInt8 | UInt16),
         UInt32 => matches!(type_from, UInt8 | UInt16 | UInt32),
         UInt64 => matches!(type_from, UInt8 | UInt16 | UInt32 | UInt64),
         Float32 => matches!(
             type_from,
-            Int8 | Int16 | Int32 | Int64 | UInt8 | UInt16 | UInt32 | UInt64 | Float32
+            Int8 | Int16
+                | Int32
+                | Int64
+                | Int96
+                | UInt8
+                | UInt16
+                | UInt32
+                | UInt64
+                | Float32
         ),
         Float64 => matches!(
             type_from,
             Int8 | Int16
                 | Int32
                 | Int64
+                | Int96
                 | UInt8
                 | UInt16
                 | UInt32

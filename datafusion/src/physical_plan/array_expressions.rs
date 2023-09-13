@@ -79,6 +79,7 @@ fn array_array(args: &[&dyn Array]) -> Result<ArrayRef> {
         DataType::Int16 => array!(args, Int16Array, Int16Builder),
         DataType::Int32 => array!(args, Int32Array, Int32Builder),
         DataType::Int64 => array!(args, Int64Array, Int64Builder),
+        DataType::Int96 => array!(args, Int96Array, Int96Builder),
         DataType::Int64Decimal(0) => {
             array!(args, Int64Decimal0Array, Int64Decimal0Builder)
         }
@@ -99,6 +100,27 @@ fn array_array(args: &[&dyn Array]) -> Result<ArrayRef> {
         }
         DataType::Int64Decimal(10) => {
             array!(args, Int64Decimal10Array, Int64Decimal10Builder)
+        }
+        DataType::Int96Decimal(0) => {
+            array!(args, Int96Decimal0Array, Int96Decimal0Builder)
+        }
+        DataType::Int96Decimal(1) => {
+            array!(args, Int96Decimal1Array, Int96Decimal1Builder)
+        }
+        DataType::Int96Decimal(2) => {
+            array!(args, Int96Decimal2Array, Int96Decimal2Builder)
+        }
+        DataType::Int96Decimal(3) => {
+            array!(args, Int96Decimal3Array, Int96Decimal3Builder)
+        }
+        DataType::Int96Decimal(4) => {
+            array!(args, Int96Decimal4Array, Int96Decimal4Builder)
+        }
+        DataType::Int96Decimal(5) => {
+            array!(args, Int96Decimal5Array, Int96Decimal5Builder)
+        }
+        DataType::Int96Decimal(10) => {
+            array!(args, Int96Decimal10Array, Int96Decimal10Builder)
         }
         DataType::UInt8 => array!(args, UInt8Array, UInt8Builder),
         DataType::UInt16 => array!(args, UInt16Array, UInt16Builder),
@@ -142,6 +164,7 @@ pub static SUPPORTED_ARRAY_TYPES: &[DataType] = &[
     DataType::Int16,
     DataType::Int32,
     DataType::Int64,
+    DataType::Int96,
     DataType::Int64Decimal(0),
     DataType::Int64Decimal(1),
     DataType::Int64Decimal(2),
@@ -149,6 +172,13 @@ pub static SUPPORTED_ARRAY_TYPES: &[DataType] = &[
     DataType::Int64Decimal(4),
     DataType::Int64Decimal(5),
     DataType::Int64Decimal(10),
+    DataType::Int96Decimal(0),
+    DataType::Int96Decimal(1),
+    DataType::Int96Decimal(2),
+    DataType::Int96Decimal(3),
+    DataType::Int96Decimal(4),
+    DataType::Int96Decimal(5),
+    DataType::Int96Decimal(10),
     DataType::Float32,
     DataType::Float64,
     DataType::Binary,

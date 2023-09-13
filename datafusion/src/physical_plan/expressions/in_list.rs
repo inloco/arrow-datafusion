@@ -25,7 +25,9 @@ use arrow::array::{
     ArrayRef, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array,
     Int64Array, Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array,
     Int64Decimal2Array, Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array,
-    Int8Array, StringOffsetSizeTrait, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    Int8Array, Int96Array, Int96Decimal0Array, Int96Decimal10Array, Int96Decimal1Array,
+    Int96Decimal2Array, Int96Decimal3Array, Int96Decimal4Array, Int96Decimal5Array,
+    StringOffsetSizeTrait, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow::{datatypes::DataType, record_batch::RecordBatch};
 
@@ -54,6 +56,59 @@ macro_rules! make_contains {
                 ColumnarValue::Scalar(s) => match s {
                     ScalarValue::Int64Decimal(Some(v), $SCALE) => Some(*v),
                     ScalarValue::Int64Decimal(None, $SCALE) => {
+                        contains_null = true;
+                        None
+                    }
+                    ScalarValue::Utf8(None) => {
+                        contains_null = true;
+                        None
+                    }
+                    datatype => unimplemented!("Unexpected type {} for InList", datatype),
+                },
+                ColumnarValue::Array(_) => {
+                    unimplemented!("InList does not yet support nested columns.")
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok(ColumnarValue::Array(Arc::new(
+            array
+                .iter()
+                .map(|x| {
+                    let contains = x.map(|x| values.contains(&x));
+                    match contains {
+                        Some(true) => {
+                            if $NEGATED {
+                                Some(false)
+                            } else {
+                                Some(true)
+                            }
+                        }
+                        Some(false) => {
+                            if contains_null {
+                                None
+                            } else if $NEGATED {
+                                Some(true)
+                            } else {
+                                Some(false)
+                            }
+                        }
+                        None => None,
+                    }
+                })
+                .collect::<BooleanArray>(),
+        )))
+    }};
+    ($ARRAY:expr, $LIST_VALUES:expr, $NEGATED:expr, Int96Decimal, $ARRAY_TYPE:ident, $SCALE:expr) => {{
+        let array = $ARRAY.as_any().downcast_ref::<$ARRAY_TYPE>().unwrap();
+
+        let mut contains_null = false;
+        let values = $LIST_VALUES
+            .iter()
+            .flat_map(|expr| match expr {
+                ColumnarValue::Scalar(s) => match s {
+                    ScalarValue::Int96Decimal(Some(v), $SCALE) => Some(*v),
+                    ScalarValue::Int96Decimal(None, $SCALE) => {
                         contains_null = true;
                         None
                     }
@@ -301,6 +356,9 @@ impl PhysicalExpr for InListExpr {
             DataType::Int64 => {
                 make_contains!(array, list_values, self.negated, Int64, Int64Array)
             }
+            DataType::Int96 => {
+                make_contains!(array, list_values, self.negated, Int96, Int96Array)
+            }
             DataType::Int8 => {
                 make_contains!(array, list_values, self.negated, Int8, Int8Array)
             }
@@ -383,6 +441,76 @@ impl PhysicalExpr for InListExpr {
                     self.negated,
                     Int64Decimal,
                     Int64Decimal10Array,
+                    10
+                )
+            }
+            DataType::Int96Decimal(0) => {
+                make_contains!(
+                    array,
+                    list_values,
+                    self.negated,
+                    Int96Decimal,
+                    Int96Decimal0Array,
+                    0
+                )
+            }
+            DataType::Int96Decimal(1) => {
+                make_contains!(
+                    array,
+                    list_values,
+                    self.negated,
+                    Int96Decimal,
+                    Int96Decimal1Array,
+                    1
+                )
+            }
+            DataType::Int96Decimal(2) => {
+                make_contains!(
+                    array,
+                    list_values,
+                    self.negated,
+                    Int96Decimal,
+                    Int96Decimal2Array,
+                    2
+                )
+            }
+            DataType::Int96Decimal(3) => {
+                make_contains!(
+                    array,
+                    list_values,
+                    self.negated,
+                    Int96Decimal,
+                    Int96Decimal3Array,
+                    3
+                )
+            }
+            DataType::Int96Decimal(4) => {
+                make_contains!(
+                    array,
+                    list_values,
+                    self.negated,
+                    Int96Decimal,
+                    Int96Decimal4Array,
+                    4
+                )
+            }
+            DataType::Int96Decimal(5) => {
+                make_contains!(
+                    array,
+                    list_values,
+                    self.negated,
+                    Int96Decimal,
+                    Int96Decimal5Array,
+                    5
+                )
+            }
+            DataType::Int96Decimal(10) => {
+                make_contains!(
+                    array,
+                    list_values,
+                    self.negated,
+                    Int96Decimal,
+                    Int96Decimal10Array,
                     10
                 )
             }

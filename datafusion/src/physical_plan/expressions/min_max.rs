@@ -31,6 +31,8 @@ use arrow::{
         ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
         Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array, Int64Decimal2Array,
         Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array, Int8Array,
+        Int96Array, Int96Decimal0Array, Int96Decimal10Array, Int96Decimal1Array,
+        Int96Decimal2Array, Int96Decimal3Array, Int96Decimal4Array, Int96Decimal5Array,
         LargeStringArray, StringArray, TimestampMicrosecondArray,
         TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray,
         UInt16Array, UInt32Array, UInt64Array, UInt8Array,
@@ -109,6 +111,11 @@ macro_rules! typed_min_max_batch_string {
         let value = compute::$OP(array);
         ScalarValue::Int64Decimal(value, $SCALE)
     }};
+    ($VALUES:expr, $ARRAYTYPE:ident, Int96Decimal, $SCALE:expr, $OP:ident) => {{
+        let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
+        let value = compute::$OP(array);
+        ScalarValue::Int96Decimal(value, $SCALE)
+    }};
     ($VALUES:expr, $ARRAYTYPE:ident, $SCALAR:ident, $OP:ident) => {{
         let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
         let value = compute::$OP(array);
@@ -123,6 +130,11 @@ macro_rules! typed_min_max_batch {
         let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
         let value = compute::$OP(array);
         ScalarValue::Int64Decimal(value, $SCALE)
+    }};
+    ($VALUES:expr, $ARRAYTYPE:ident, Int96Decimal, $SCALE:expr, $OP:ident) => {{
+        let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
+        let value = compute::$OP(array);
+        ScalarValue::Int96Decimal(value, $SCALE)
     }};
     ($VALUES:expr, $ARRAYTYPE:ident, $SCALAR:ident, $OP:ident) => {{
         let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
@@ -144,6 +156,7 @@ macro_rules! min_max_batch {
                 typed_min_max_batch!($VALUES, Float32Array, Float32, $OP)
             }
             DataType::Int64 => typed_min_max_batch!($VALUES, Int64Array, Int64, $OP),
+            DataType::Int96 => typed_min_max_batch!($VALUES, Int96Array, Int96, $OP),
             DataType::Int64Decimal(0) => {
                 typed_min_max_batch!($VALUES, Int64Decimal0Array, Int64Decimal, 0, $OP)
             }
@@ -164,6 +177,27 @@ macro_rules! min_max_batch {
             }
             DataType::Int64Decimal(10) => {
                 typed_min_max_batch!($VALUES, Int64Decimal10Array, Int64Decimal, 10, $OP)
+            }
+            DataType::Int96Decimal(0) => {
+                typed_min_max_batch!($VALUES, Int96Decimal0Array, Int96Decimal, 0, $OP)
+            }
+            DataType::Int96Decimal(1) => {
+                typed_min_max_batch!($VALUES, Int96Decimal1Array, Int96Decimal, 1, $OP)
+            }
+            DataType::Int96Decimal(2) => {
+                typed_min_max_batch!($VALUES, Int96Decimal2Array, Int96Decimal, 2, $OP)
+            }
+            DataType::Int96Decimal(3) => {
+                typed_min_max_batch!($VALUES, Int96Decimal3Array, Int96Decimal, 3, $OP)
+            }
+            DataType::Int96Decimal(4) => {
+                typed_min_max_batch!($VALUES, Int96Decimal4Array, Int96Decimal, 4, $OP)
+            }
+            DataType::Int96Decimal(5) => {
+                typed_min_max_batch!($VALUES, Int96Decimal5Array, Int96Decimal, 5, $OP)
+            }
+            DataType::Int96Decimal(10) => {
+                typed_min_max_batch!($VALUES, Int96Decimal10Array, Int96Decimal, 10, $OP)
             }
             DataType::Int32 => typed_min_max_batch!($VALUES, Int32Array, Int32, $OP),
             DataType::Int16 => typed_min_max_batch!($VALUES, Int16Array, Int16, $OP),
@@ -243,6 +277,17 @@ macro_rules! typed_min_max {
             $SCALE,
         )
     }};
+    ($VALUE:expr, $DELTA:expr, Int96Decimal, $OP:ident, $SCALE:expr) => {{
+        ScalarValue::Int96Decimal(
+            match ($VALUE, $DELTA) {
+                (None, None) => None,
+                (Some(a), None) => Some(a.clone()),
+                (None, Some(b)) => Some(b.clone()),
+                (Some(a), Some(b)) => Some((*a).$OP(*b)),
+            },
+            $SCALE,
+        )
+    }};
     ($VALUE:expr, $DELTA:expr, $SCALAR:ident, $OP:ident) => {{
         ScalarValue::$SCALAR(match ($VALUE, $DELTA) {
             (None, None) => None,
@@ -290,6 +335,9 @@ macro_rules! min_max {
             (ScalarValue::Int64(lhs), ScalarValue::Int64(rhs)) => {
                 typed_min_max!(lhs, rhs, Int64, $OP)
             }
+            (ScalarValue::Int96(lhs), ScalarValue::Int96(rhs)) => {
+                typed_min_max!(lhs, rhs, Int96, $OP)
+            }
             (
                 ScalarValue::Int64Decimal(lhs, lscale),
                 ScalarValue::Int64Decimal(rhs, rscale),
@@ -301,6 +349,18 @@ macro_rules! min_max {
                     )));
                 }
                 typed_min_max!(lhs, rhs, Int64Decimal, $OP, *lscale)
+            }
+            (
+                ScalarValue::Int96Decimal(lhs, lscale),
+                ScalarValue::Int96Decimal(rhs, rscale),
+            ) => {
+                if lscale != rscale {
+                    return Err(DataFusionError::Internal(format!(
+                        "Scale mismatch: {} and {}",
+                        lscale, rscale
+                    )));
+                }
+                typed_min_max!(lhs, rhs, Int96Decimal, $OP, *lscale)
             }
             (ScalarValue::Int32(lhs), ScalarValue::Int32(rhs)) => {
                 typed_min_max!(lhs, rhs, Int32, $OP)

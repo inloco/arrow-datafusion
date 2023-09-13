@@ -48,8 +48,8 @@ use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 
 use arrow::array::{
-    Int16Array, Int32Array, Int64Array, Int8Array, StringArray, UInt16Array, UInt32Array,
-    UInt64Array, UInt8Array,
+    Int16Array, Int32Array, Int64Array, Int8Array, Int96Array, StringArray, UInt16Array,
+    UInt32Array, UInt64Array, UInt8Array,
 };
 
 use super::expressions::Column;
@@ -827,6 +827,7 @@ fn equal_rows(
             DataType::Int16 => equal_rows_elem!(Int16Array, l, r, left, right),
             DataType::Int32 => equal_rows_elem!(Int32Array, l, r, left, right),
             DataType::Int64 => equal_rows_elem!(Int64Array, l, r, left, right),
+            DataType::Int96 => equal_rows_elem!(Int96Array, l, r, left, right),
             DataType::UInt8 => equal_rows_elem!(UInt8Array, l, r, left, right),
             DataType::UInt16 => equal_rows_elem!(UInt16Array, l, r, left, right),
             DataType::UInt32 => equal_rows_elem!(UInt32Array, l, r, left, right),
@@ -1064,6 +1065,16 @@ pub fn create_hashes<'a>(
                     Int64Array,
                     col,
                     i64,
+                    hashes_buffer,
+                    random_state,
+                    multi_col
+                );
+            }
+            DataType::Int96 => {
+                hash_array_primitive!(
+                    Int96Array,
+                    col,
+                    i128,
                     hashes_buffer,
                     random_state,
                     multi_col

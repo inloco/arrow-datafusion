@@ -50,8 +50,12 @@ pub enum ScalarValue {
     Int32(Option<i32>),
     /// signed 64bit int
     Int64(Option<i64>),
+    /// signed 96bit int
+    Int96(Option<i128>),
     /// Int64 mapped decimal
     Int64Decimal(Option<i64>, u8),
+    /// Int96 mapped decimal
+    Int96Decimal(Option<i128>, u8),
     /// unsigned 8bit int
     UInt8(Option<u8>),
     /// unsigned 16bit int
@@ -93,6 +97,16 @@ macro_rules! typed_cast {
     ($array:expr, $index:expr, $ARRAYTYPE:ident, Int64Decimal, $SCALE:expr) => {{
         let array = $array.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
         ScalarValue::Int64Decimal(
+            match array.is_null($index) {
+                true => None,
+                false => Some(array.value($index).into()),
+            },
+            $SCALE,
+        )
+    }};
+    ($array:expr, $index:expr, $ARRAYTYPE:ident, Int96Decimal, $SCALE:expr) => {{
+        let array = $array.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
+        ScalarValue::Int96Decimal(
             match array.is_null($index) {
                 true => None,
                 false => Some(array.value($index).into()),
@@ -243,8 +257,12 @@ impl ScalarValue {
             ScalarValue::Int16(_) => DataType::Int16,
             ScalarValue::Int32(_) => DataType::Int32,
             ScalarValue::Int64(_) => DataType::Int64,
+            ScalarValue::Int96(_) => DataType::Int96,
             ScalarValue::Int64Decimal(_, scale) => {
                 DataType::Int64Decimal(*scale as usize)
+            }
+            ScalarValue::Int96Decimal(_, scale) => {
+                DataType::Int96Decimal(*scale as usize)
             }
             ScalarValue::TimestampSecond(_) => {
                 DataType::Timestamp(TimeUnit::Second, None)
@@ -293,8 +311,12 @@ impl ScalarValue {
             ScalarValue::Int16(Some(v)) => ScalarValue::Int16(Some(-v)),
             ScalarValue::Int32(Some(v)) => ScalarValue::Int32(Some(-v)),
             ScalarValue::Int64(Some(v)) => ScalarValue::Int64(Some(-v)),
+            ScalarValue::Int96(Some(v)) => ScalarValue::Int96(Some(-v)),
             ScalarValue::Int64Decimal(Some(v), s) => {
                 ScalarValue::Int64Decimal(Some(-v), *s)
+            }
+            ScalarValue::Int96Decimal(Some(v), s) => {
+                ScalarValue::Int96Decimal(Some(-v), *s)
             }
             _ => panic!("Cannot run arithmetic negate on scalar value: {:?}", self),
         }
@@ -313,7 +335,9 @@ impl ScalarValue {
                 | ScalarValue::Int16(None)
                 | ScalarValue::Int32(None)
                 | ScalarValue::Int64(None)
+                | ScalarValue::Int96(None)
                 | ScalarValue::Int64Decimal(None, _)
+                | ScalarValue::Int96Decimal(None, _)
                 | ScalarValue::Float32(None)
                 | ScalarValue::Float64(None)
                 | ScalarValue::Utf8(None)
@@ -494,6 +518,7 @@ impl ScalarValue {
             DataType::Int16 => build_array_primitive!(Int16Array, Int16),
             DataType::Int32 => build_array_primitive!(Int32Array, Int32),
             DataType::Int64 => build_array_primitive!(Int64Array, Int64),
+            DataType::Int96 => build_array_primitive!(Int96Array, Int96),
             DataType::UInt8 => build_array_primitive!(UInt8Array, UInt8),
             DataType::UInt16 => build_array_primitive!(UInt16Array, UInt16),
             DataType::UInt32 => build_array_primitive!(UInt32Array, UInt32),
@@ -586,6 +611,7 @@ impl ScalarValue {
             ScalarValue::Int16(e) => build_array_from_option!(Int16, Int16Array, e, size),
             ScalarValue::Int32(e) => build_array_from_option!(Int32, Int32Array, e, size),
             ScalarValue::Int64(e) => build_array_from_option!(Int64, Int64Array, e, size),
+            ScalarValue::Int96(e) => build_array_from_option!(Int96, Int96Array, e, size),
             ScalarValue::Int64Decimal(e, 0) => match e {
                 Some(e) => Arc::new(Int64Decimal0Array::from(vec![*e; size])),
                 None => new_null_array(&DataType::Int64Decimal(0), size),
@@ -616,6 +642,37 @@ impl ScalarValue {
             },
             ScalarValue::Int64Decimal(_, scale) => {
                 panic!("Unexpected scale for Int64Decimal: {}", scale)
+            }
+            ScalarValue::Int96Decimal(e, 0) => match e {
+                Some(e) => Arc::new(Int96Decimal0Array::from(vec![*e; size])),
+                None => new_null_array(&DataType::Int96Decimal(0), size),
+            },
+            ScalarValue::Int96Decimal(e, 1) => match e {
+                Some(e) => Arc::new(Int96Decimal1Array::from(vec![*e; size])),
+                None => new_null_array(&DataType::Int96Decimal(1), size),
+            },
+            ScalarValue::Int96Decimal(e, 2) => match e {
+                Some(e) => Arc::new(Int96Decimal2Array::from(vec![*e; size])),
+                None => new_null_array(&DataType::Int96Decimal(2), size),
+            },
+            ScalarValue::Int96Decimal(e, 3) => match e {
+                Some(e) => Arc::new(Int96Decimal3Array::from(vec![*e; size])),
+                None => new_null_array(&DataType::Int96Decimal(3), size),
+            },
+            ScalarValue::Int96Decimal(e, 4) => match e {
+                Some(e) => Arc::new(Int96Decimal4Array::from(vec![*e; size])),
+                None => new_null_array(&DataType::Int96Decimal(4), size),
+            },
+            ScalarValue::Int96Decimal(e, 5) => match e {
+                Some(e) => Arc::new(Int96Decimal5Array::from(vec![*e; size])),
+                None => new_null_array(&DataType::Int96Decimal(5), size),
+            },
+            ScalarValue::Int96Decimal(e, 10) => match e {
+                Some(e) => Arc::new(Int96Decimal10Array::from(vec![*e; size])),
+                None => new_null_array(&DataType::Int96Decimal(10), size),
+            },
+            ScalarValue::Int96Decimal(_, scale) => {
+                panic!("Unexpected scale for Int96Decimal: {}", scale)
             }
             ScalarValue::UInt8(e) => build_array_from_option!(UInt8, UInt8Array, e, size),
             ScalarValue::UInt16(e) => {
@@ -750,6 +807,7 @@ impl ScalarValue {
             DataType::UInt16 => typed_cast!(array, index, UInt16Array, UInt16),
             DataType::UInt8 => typed_cast!(array, index, UInt8Array, UInt8),
             DataType::Int64 => typed_cast!(array, index, Int64Array, Int64),
+            DataType::Int96 => typed_cast!(array, index, Int96Array, Int96),
             DataType::Int64Decimal(0) => {
                 typed_cast!(array, index, Int64Decimal0Array, Int64Decimal, 0)
             }
@@ -770,6 +828,27 @@ impl ScalarValue {
             }
             DataType::Int64Decimal(10) => {
                 typed_cast!(array, index, Int64Decimal10Array, Int64Decimal, 10)
+            }
+            DataType::Int96Decimal(0) => {
+                typed_cast!(array, index, Int96Decimal0Array, Int96Decimal, 0)
+            }
+            DataType::Int96Decimal(1) => {
+                typed_cast!(array, index, Int96Decimal1Array, Int96Decimal, 1)
+            }
+            DataType::Int96Decimal(2) => {
+                typed_cast!(array, index, Int96Decimal2Array, Int96Decimal, 2)
+            }
+            DataType::Int96Decimal(3) => {
+                typed_cast!(array, index, Int96Decimal3Array, Int96Decimal, 3)
+            }
+            DataType::Int96Decimal(4) => {
+                typed_cast!(array, index, Int96Decimal4Array, Int96Decimal, 4)
+            }
+            DataType::Int96Decimal(5) => {
+                typed_cast!(array, index, Int96Decimal5Array, Int96Decimal, 5)
+            }
+            DataType::Int96Decimal(10) => {
+                typed_cast!(array, index, Int96Decimal10Array, Int96Decimal, 10)
             }
             DataType::Int32 => typed_cast!(array, index, Int32Array, Int32),
             DataType::Int16 => typed_cast!(array, index, Int16Array, Int16),
@@ -911,6 +990,12 @@ impl From<i64> for ScalarValue {
     }
 }
 
+impl From<i128> for ScalarValue {
+    fn from(value: i128) -> Self {
+        ScalarValue::Int96(Some(value))
+    }
+}
+
 impl From<bool> for ScalarValue {
     fn from(value: bool) -> Self {
         ScalarValue::Boolean(Some(value))
@@ -1016,6 +1101,23 @@ impl TryFrom<ScalarValue> for i64 {
     }
 }
 
+// special implementation for i128 because of Decimal
+impl TryFrom<ScalarValue> for i128 {
+    type Error = DataFusionError;
+
+    fn try_from(value: ScalarValue) -> Result<Self> {
+        match value {
+            ScalarValue::Int96(Some(inner_value))
+            | ScalarValue::Int96Decimal(Some(inner_value), _) => Ok(inner_value),
+            _ => Err(DataFusionError::Internal(format!(
+                "Cannot convert {:?} to {}",
+                value,
+                std::any::type_name::<Self>()
+            ))),
+        }
+    }
+}
+
 impl_try_from!(UInt8, u8);
 impl_try_from!(UInt16, u16);
 impl_try_from!(UInt32, u32);
@@ -1036,8 +1138,12 @@ impl TryFrom<&DataType> for ScalarValue {
             DataType::Int16 => ScalarValue::Int16(None),
             DataType::Int32 => ScalarValue::Int32(None),
             DataType::Int64 => ScalarValue::Int64(None),
+            DataType::Int96 => ScalarValue::Int96(None),
             DataType::Int64Decimal(scale) => {
                 ScalarValue::Int64Decimal(None, *scale as u8)
+            }
+            DataType::Int96Decimal(scale) => {
+                ScalarValue::Int96Decimal(None, *scale as u8)
             }
             DataType::UInt8 => ScalarValue::UInt8(None),
             DataType::UInt16 => ScalarValue::UInt16(None),
@@ -1092,7 +1198,11 @@ impl fmt::Display for ScalarValue {
             ScalarValue::Int16(e) => format_option!(f, e)?,
             ScalarValue::Int32(e) => format_option!(f, e)?,
             ScalarValue::Int64(e) => format_option!(f, e)?,
+            ScalarValue::Int96(e) => format_option!(f, e)?,
             ScalarValue::Int64Decimal(e, scale) => {
+                format_option!(f, e.map(|v| v as f64 / *scale as f64))?
+            }
+            ScalarValue::Int96Decimal(e, scale) => {
                 format_option!(f, e.map(|v| v as f64 / *scale as f64))?
             }
             ScalarValue::UInt8(e) => format_option!(f, e)?,
@@ -1157,7 +1267,9 @@ impl fmt::Debug for ScalarValue {
             ScalarValue::Int16(_) => write!(f, "Int16({})", self),
             ScalarValue::Int32(_) => write!(f, "Int32({})", self),
             ScalarValue::Int64(_) => write!(f, "Int64({})", self),
+            ScalarValue::Int96(_) => write!(f, "Int96({})", self),
             ScalarValue::Int64Decimal(_, _) => write!(f, "Int64Decimal({})", self),
+            ScalarValue::Int96Decimal(_, _) => write!(f, "Int96Decimal({})", self),
             ScalarValue::UInt8(_) => write!(f, "UInt8({})", self),
             ScalarValue::UInt16(_) => write!(f, "UInt16({})", self),
             ScalarValue::UInt32(_) => write!(f, "UInt32({})", self),

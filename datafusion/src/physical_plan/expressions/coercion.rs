@@ -27,10 +27,12 @@ pub fn is_signed_numeric(dt: &DataType) -> bool {
             | DataType::Int16
             | DataType::Int32
             | DataType::Int64
+            | DataType::Int96
             | DataType::Float16
             | DataType::Float32
             | DataType::Float64
             | DataType::Int64Decimal(_)
+            | DataType::Int96Decimal(_)
     )
 }
 
@@ -123,6 +125,11 @@ pub fn numerical_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<Da
     // these are ordered from most informative to least informative so
     // that the coercion removes the least amount of information
     match (lhs_type, rhs_type) {
+        (Int96Decimal(scale_a), Int96Decimal(scale_b)) => {
+            Some(Int96Decimal(std::cmp::max(*scale_a, *scale_b)))
+        }
+        (_, Int96Decimal(scale)) => Some(Int96Decimal(*scale)),
+        (Int96Decimal(scale), _) => Some(Int96Decimal(*scale)),
         (Int64Decimal(scale_a), Int64Decimal(scale_b)) => {
             Some(Int64Decimal(std::cmp::max(*scale_a, *scale_b)))
         }
@@ -134,6 +141,9 @@ pub fn numerical_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<Da
 
         (_, Float32) => Some(Float32),
         (Float32, _) => Some(Float32),
+
+        (Int96, _) => Some(Int96),
+        (_, Int96) => Some(Int96),
 
         (Int64, _) => Some(Int64),
         (_, Int64) => Some(Int64),
@@ -187,6 +197,8 @@ pub fn string_implicit_cast(
     // these are ordered from most informative to least informative so
     // that the coercion removes the least amount of information
     match (lhs_type, rhs_type) {
+        (_, Int96Decimal(scale)) => Some(Int96Decimal(*scale)),
+        (Int96Decimal(scale), _) => Some(Int96Decimal(*scale)),
         (_, Int64Decimal(scale)) => Some(Int64Decimal(*scale)),
         (Int64Decimal(scale), _) => Some(Int64Decimal(*scale)),
 
@@ -195,6 +207,9 @@ pub fn string_implicit_cast(
 
         (_, Float32) => Some(Float32),
         (Float32, _) => Some(Float32),
+
+        (Int96, _) => Some(Int96),
+        (_, Int96) => Some(Int96),
 
         (Int64, _) => Some(Int64),
         (_, Int64) => Some(Int64),

@@ -209,6 +209,13 @@ pub fn if_then_else(
             true_values,
             false_values
         ),
+        DataType::Int96 => if_then_else!(
+            array::Int96Builder,
+            array::Int96Array,
+            bools,
+            true_values,
+            false_values
+        ),
         DataType::Int64Decimal(0) => if_then_else!(
             array::Int64Decimal0Builder,
             array::Int64Decimal0Array,
@@ -254,6 +261,55 @@ pub fn if_then_else(
         DataType::Int64Decimal(10) => if_then_else!(
             array::Int64Decimal10Builder,
             array::Int64Decimal10Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int96Decimal(0) => if_then_else!(
+            array::Int96Decimal0Builder,
+            array::Int96Decimal0Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int96Decimal(1) => if_then_else!(
+            array::Int96Decimal1Builder,
+            array::Int96Decimal1Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int96Decimal(2) => if_then_else!(
+            array::Int96Decimal2Builder,
+            array::Int96Decimal2Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int96Decimal(3) => if_then_else!(
+            array::Int96Decimal3Builder,
+            array::Int96Decimal3Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int96Decimal(4) => if_then_else!(
+            array::Int96Decimal4Builder,
+            array::Int96Decimal4Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int96Decimal(5) => if_then_else!(
+            array::Int96Decimal5Builder,
+            array::Int96Decimal5Array,
+            bools,
+            true_values,
+            false_values
+        ),
+        DataType::Int96Decimal(10) => if_then_else!(
+            array::Int96Decimal10Builder,
+            array::Int96Decimal10Array,
             bools,
             true_values,
             false_values
@@ -362,6 +418,9 @@ fn array_equals(
         DataType::Int64 => {
             array_equals!(array::Int64Array, when_value, base_value, eq)
         }
+        DataType::Int96 => {
+            array_equals!(array::Int96Array, when_value, base_value, eq)
+        }
         DataType::Int64Decimal(0) => {
             array_equals!(array::Int64Decimal0Array, when_value, base_value, eq)
         }
@@ -382,6 +441,27 @@ fn array_equals(
         }
         DataType::Int64Decimal(10) => {
             array_equals!(array::Int64Decimal10Array, when_value, base_value, eq)
+        }
+        DataType::Int96Decimal(0) => {
+            array_equals!(array::Int96Decimal0Array, when_value, base_value, eq)
+        }
+        DataType::Int96Decimal(1) => {
+            array_equals!(array::Int96Decimal1Array, when_value, base_value, eq)
+        }
+        DataType::Int96Decimal(2) => {
+            array_equals!(array::Int96Decimal2Array, when_value, base_value, eq)
+        }
+        DataType::Int96Decimal(3) => {
+            array_equals!(array::Int96Decimal3Array, when_value, base_value, eq)
+        }
+        DataType::Int96Decimal(4) => {
+            array_equals!(array::Int96Decimal4Array, when_value, base_value, eq)
+        }
+        DataType::Int96Decimal(5) => {
+            array_equals!(array::Int96Decimal5Array, when_value, base_value, eq)
+        }
+        DataType::Int96Decimal(10) => {
+            array_equals!(array::Int96Decimal10Array, when_value, base_value, eq)
         }
         DataType::Float32 => {
             array_equals!(array::Float32Array, when_value, base_value, eq)

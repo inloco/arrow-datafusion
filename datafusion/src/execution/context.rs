@@ -1839,7 +1839,7 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert_eq!(results.to_string(), "Error during planning: Coercion from [Timestamp(Nanosecond, None)] to the signature Uniform(1, [Int8, Int16, Int32, Int64, Int64Decimal(0), Int64Decimal(1), Int64Decimal(2), Int64Decimal(3), Int64Decimal(4), Int64Decimal(5), Int64Decimal(10), UInt8, UInt16, UInt32, UInt64, Float32, Float64]) failed.");
+        assert_eq!(results.to_string(), "Error during planning: Coercion from [Timestamp(Nanosecond, None)] to the signature Uniform(1, [Int8, Int16, Int32, Int64, Int96, Int64Decimal(0), Int64Decimal(1), Int64Decimal(2), Int64Decimal(3), Int64Decimal(4), Int64Decimal(5), Int64Decimal(10), Int96Decimal(0), Int96Decimal(1), Int96Decimal(2), Int96Decimal(3), Int96Decimal(4), Int96Decimal(5), Int96Decimal(10), UInt8, UInt16, UInt32, UInt64, Float32, Float64]) failed.");
 
         Ok(())
     }
@@ -1936,7 +1936,7 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert_eq!(results.to_string(), "Error during planning: Coercion from [Timestamp(Nanosecond, None)] to the signature Uniform(1, [Int8, Int16, Int32, Int64, Int64Decimal(0), Int64Decimal(1), Int64Decimal(2), Int64Decimal(3), Int64Decimal(4), Int64Decimal(5), Int64Decimal(10), UInt8, UInt16, UInt32, UInt64, Float32, Float64]) failed.");
+        assert_eq!(results.to_string(), "Error during planning: Coercion from [Timestamp(Nanosecond, None)] to the signature Uniform(1, [Int8, Int16, Int32, Int64, Int96, Int64Decimal(0), Int64Decimal(1), Int64Decimal(2), Int64Decimal(3), Int64Decimal(4), Int64Decimal(5), Int64Decimal(10), Int96Decimal(0), Int96Decimal(1), Int96Decimal(2), Int96Decimal(3), Int96Decimal(4), Int96Decimal(5), Int96Decimal(10), UInt8, UInt16, UInt32, UInt64, Float32, Float64]) failed.");
         Ok(())
     }
 

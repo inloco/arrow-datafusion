@@ -240,6 +240,7 @@ macro_rules! binary_primitive_array_op {
             DataType::Int16 => compute_op!($LEFT, $RIGHT, $OP, Int16Array),
             DataType::Int32 => compute_op!($LEFT, $RIGHT, $OP, Int32Array),
             DataType::Int64 => compute_op!($LEFT, $RIGHT, $OP, Int64Array),
+            DataType::Int96 => compute_op!($LEFT, $RIGHT, $OP, Int96Array),
             DataType::Int64Decimal(0) => {
                 compute_op!($LEFT, $RIGHT, $OP, Int64Decimal0Array)
             }
@@ -260,6 +261,27 @@ macro_rules! binary_primitive_array_op {
             }
             DataType::Int64Decimal(10) => {
                 compute_op!($LEFT, $RIGHT, $OP, Int64Decimal10Array)
+            }
+            DataType::Int96Decimal(0) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal0Array)
+            }
+            DataType::Int96Decimal(1) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal1Array)
+            }
+            DataType::Int96Decimal(2) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal2Array)
+            }
+            DataType::Int96Decimal(3) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal3Array)
+            }
+            DataType::Int96Decimal(4) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal4Array)
+            }
+            DataType::Int96Decimal(5) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal5Array)
+            }
+            DataType::Int96Decimal(10) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal10Array)
             }
             DataType::UInt8 => compute_op!($LEFT, $RIGHT, $OP, UInt8Array),
             DataType::UInt16 => compute_op!($LEFT, $RIGHT, $OP, UInt16Array),
@@ -285,6 +307,7 @@ macro_rules! binary_primitive_array_op_scalar {
             DataType::Int16 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int16Array),
             DataType::Int32 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int32Array),
             DataType::Int64 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Array),
+            DataType::Int96 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Array),
             DataType::Int64Decimal(0) => {
                 compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal0Array)
             }
@@ -305,6 +328,27 @@ macro_rules! binary_primitive_array_op_scalar {
             }
             DataType::Int64Decimal(10) => {
                 compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal10Array)
+            }
+            DataType::Int96Decimal(0) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal0Array)
+            }
+            DataType::Int96Decimal(1) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal1Array)
+            }
+            DataType::Int96Decimal(2) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal2Array)
+            }
+            DataType::Int96Decimal(3) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal3Array)
+            }
+            DataType::Int96Decimal(4) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal4Array)
+            }
+            DataType::Int96Decimal(5) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal5Array)
+            }
+            DataType::Int96Decimal(10) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal10Array)
             }
             DataType::UInt8 => compute_op_scalar!($LEFT, $RIGHT, $OP, UInt8Array),
             DataType::UInt16 => compute_op_scalar!($LEFT, $RIGHT, $OP, UInt16Array),
@@ -334,6 +378,7 @@ macro_rules! binary_array_op_scalar {
             DataType::Int16 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int16Array),
             DataType::Int32 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int32Array),
             DataType::Int64 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Array),
+            DataType::Int96 => compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Array),
             DataType::Int64Decimal(0) => {
                 compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal0Array)
             }
@@ -354,6 +399,27 @@ macro_rules! binary_array_op_scalar {
             }
             DataType::Int64Decimal(10) => {
                 compute_op_scalar!($LEFT, $RIGHT, $OP, Int64Decimal10Array)
+            }
+            DataType::Int96Decimal(0) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal0Array)
+            }
+            DataType::Int96Decimal(1) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal1Array)
+            }
+            DataType::Int96Decimal(2) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal2Array)
+            }
+            DataType::Int96Decimal(3) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal3Array)
+            }
+            DataType::Int96Decimal(4) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal4Array)
+            }
+            DataType::Int96Decimal(5) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal5Array)
+            }
+            DataType::Int96Decimal(10) => {
+                compute_op_scalar!($LEFT, $RIGHT, $OP, Int96Decimal10Array)
             }
             DataType::UInt8 => compute_op_scalar!($LEFT, $RIGHT, $OP, UInt8Array),
             DataType::UInt16 => compute_op_scalar!($LEFT, $RIGHT, $OP, UInt16Array),
@@ -402,6 +468,7 @@ macro_rules! binary_array_op {
             DataType::Int16 => compute_op!($LEFT, $RIGHT, $OP, Int16Array),
             DataType::Int32 => compute_op!($LEFT, $RIGHT, $OP, Int32Array),
             DataType::Int64 => compute_op!($LEFT, $RIGHT, $OP, Int64Array),
+            DataType::Int96 => compute_op!($LEFT, $RIGHT, $OP, Int96Array),
             DataType::Int64Decimal(0) => {
                 compute_op!($LEFT, $RIGHT, $OP, Int64Decimal0Array)
             }
@@ -422,6 +489,27 @@ macro_rules! binary_array_op {
             }
             DataType::Int64Decimal(10) => {
                 compute_op!($LEFT, $RIGHT, $OP, Int64Decimal10Array)
+            }
+            DataType::Int96Decimal(0) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal0Array)
+            }
+            DataType::Int96Decimal(1) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal1Array)
+            }
+            DataType::Int96Decimal(2) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal2Array)
+            }
+            DataType::Int96Decimal(3) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal3Array)
+            }
+            DataType::Int96Decimal(4) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal4Array)
+            }
+            DataType::Int96Decimal(5) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal5Array)
+            }
+            DataType::Int96Decimal(10) => {
+                compute_op!($LEFT, $RIGHT, $OP, Int96Decimal10Array)
             }
             DataType::UInt8 => compute_op!($LEFT, $RIGHT, $OP, UInt8Array),
             DataType::UInt16 => compute_op!($LEFT, $RIGHT, $OP, UInt16Array),
@@ -483,6 +571,8 @@ fn multi_div_conversion(lhs_type: &DataType, rhs_type: &DataType) -> Option<Data
     match (lhs_type, rhs_type) {
         (_, Int64Decimal(_)) => Some(Float64),
         (Int64Decimal(_), _) => Some(Float64),
+        (_, Int96Decimal(_)) => Some(Float64),
+        (Int96Decimal(_), _) => Some(Float64),
         _ => None,
     }
 }

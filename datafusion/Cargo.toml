@@ -46,7 +46,7 @@ default_nulls_last = []
 
 [dependencies]
 ahash = "0.7"
-hashbrown = "0.11"
+hashbrown = "~0.11"
 arrow = { git = "https://github.com/cube-js/arrow-rs.git", branch = "cube", features = ["prettyprint"] }
 parquet = { git = "https://github.com/cube-js/arrow-rs.git", branch = "cube", features = ["arrow"] }
 sqlparser = { git = "https://github.com/cube-js/sqlparser-rs.git", rev = "4388f6712dae5073c2d71d74f64cae2edd418066" }

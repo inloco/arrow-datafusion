@@ -39,6 +39,7 @@ pub enum GroupByScalar {
     Int16(i16),
     Int32(i32),
     Int64(i64),
+    Int96(i128),
     // TODO
     Utf8(String),
     LargeUtf8(String),
@@ -47,6 +48,7 @@ pub enum GroupByScalar {
     TimeMicrosecond(i64),
     TimeNanosecond(i64),
     Int64Decimal(i64, u8),
+    Int96Decimal(i128, u8),
     Date32(i32),
 }
 
@@ -62,6 +64,7 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
             ScalarValue::Int16(Some(v)) => GroupByScalar::Int16(*v),
             ScalarValue::Int32(Some(v)) => GroupByScalar::Int32(*v),
             ScalarValue::Int64(Some(v)) => GroupByScalar::Int64(*v),
+            ScalarValue::Int96(Some(v)) => GroupByScalar::Int96(*v),
             // TODO
             ScalarValue::UInt8(Some(v)) => GroupByScalar::UInt8(*v),
             ScalarValue::UInt16(Some(v)) => GroupByScalar::UInt16(*v),
@@ -69,6 +72,9 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
             ScalarValue::UInt64(Some(v)) => GroupByScalar::UInt64(*v),
             ScalarValue::Int64Decimal(Some(v), size) => {
                 GroupByScalar::Int64Decimal(*v, *size)
+            }
+            ScalarValue::Int96Decimal(Some(v), size) => {
+                GroupByScalar::Int96Decimal(*v, *size)
             }
             ScalarValue::TimestampMillisecond(Some(v)) => {
                 GroupByScalar::TimeMillisecond(*v)
@@ -88,12 +94,14 @@ impl TryFrom<&ScalarValue> for GroupByScalar {
             | ScalarValue::Int16(None)
             | ScalarValue::Int32(None)
             | ScalarValue::Int64(None)
+            | ScalarValue::Int96(None)
             | ScalarValue::UInt8(None)
             | ScalarValue::UInt16(None)
             | ScalarValue::UInt32(None)
             | ScalarValue::UInt64(None)
             | ScalarValue::Utf8(None)
             | ScalarValue::Int64Decimal(None, _)
+            | ScalarValue::Int96Decimal(None, _)
             | ScalarValue::TimestampMillisecond(None)
             | ScalarValue::TimestampMicrosecond(None)
             | ScalarValue::TimestampNanosecond(None) => GroupByScalar::Null,
@@ -121,6 +129,7 @@ impl GroupByScalar {
             GroupByScalar::Int16(v) => ScalarValue::Int16(Some(*v)),
             GroupByScalar::Int32(v) => ScalarValue::Int32(Some(*v)),
             GroupByScalar::Int64(v) => ScalarValue::Int64(Some(*v)),
+            GroupByScalar::Int96(v) => ScalarValue::Int96(Some(*v)),
             // TODO
             GroupByScalar::UInt8(v) => ScalarValue::UInt8(Some(*v)),
             GroupByScalar::UInt16(v) => ScalarValue::UInt16(Some(*v)),
@@ -130,6 +139,9 @@ impl GroupByScalar {
             GroupByScalar::LargeUtf8(v) => ScalarValue::LargeUtf8(Some(v.to_string())),
             GroupByScalar::Int64Decimal(v, size) => {
                 ScalarValue::Int64Decimal(Some(*v), *size)
+            }
+            GroupByScalar::Int96Decimal(v, size) => {
+                ScalarValue::Int96Decimal(Some(*v), *size)
             }
             GroupByScalar::TimeMillisecond(v) => {
                 ScalarValue::TimestampMillisecond(Some(*v))

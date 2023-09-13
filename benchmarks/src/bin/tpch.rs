@@ -706,60 +706,60 @@ mod tests {
         verify_query(22).await
     }
 
-    #[tokio::test]
-    async fn run_q1() -> Result<()> {
-        run_query(1).await
+    #[test]
+    fn run_q1() -> Result<()> {
+        block_on_query(1)
     }
 
-    #[tokio::test]
-    async fn run_q3() -> Result<()> {
-        run_query(3).await
+    #[test]
+    fn run_q3() -> Result<()> {
+        block_on_query(3)
     }
 
-    #[tokio::test]
-    async fn run_q5() -> Result<()> {
-        run_query(5).await
+    #[test]
+    fn run_q5() -> Result<()> {
+        block_on_query(5)
     }
 
-    #[tokio::test]
-    async fn run_q6() -> Result<()> {
-        run_query(6).await
+    #[test]
+    fn run_q6() -> Result<()> {
+        block_on_query(6)
     }
 
-    #[tokio::test]
-    async fn run_q7() -> Result<()> {
-        run_query(7).await
+    #[test]
+    fn run_q7() -> Result<()> {
+        block_on_query(7)
     }
 
-    #[tokio::test]
-    async fn run_q8() -> Result<()> {
-        run_query(8).await
+    #[test]
+    fn run_q8() -> Result<()> {
+        block_on_query(8)
     }
 
-    #[tokio::test]
-    async fn run_q9() -> Result<()> {
-        run_query(9).await
+    #[test]
+    fn run_q9() -> Result<()> {
+        block_on_query(9)
     }
 
-    #[tokio::test]
-    async fn run_q10() -> Result<()> {
-        run_query(10).await
+    #[test]
+    fn run_q10() -> Result<()> {
+        block_on_query(10)
     }
 
-    #[tokio::test]
+    #[test]
     #[ignore = "fails in CubeStore fork"]
-    async fn run_q12() -> Result<()> {
-        run_query(12).await
+    fn run_q12() -> Result<()> {
+        block_on_query(12)
     }
 
-    #[tokio::test]
-    async fn run_q14() -> Result<()> {
-        run_query(14).await
+    #[test]
+    fn run_q14() -> Result<()> {
+        block_on_query(14)
     }
 
-    #[tokio::test]
-    async fn run_q19() -> Result<()> {
-        run_query(19).await
+    #[test]
+    fn run_q19() -> Result<()> {
+        block_on_query(19)
     }
 
     /// Specialised String representation
@@ -971,6 +971,15 @@ mod tests {
                 })
                 .collect::<Vec<Field>>(),
         )
+    }
+
+    fn block_on_query(n: usize) -> Result<()> {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_stack_size(4 * 1024 * 1024)
+            .build()
+            .unwrap()
+            .block_on(async { run_query(n).await })
     }
 
     async fn run_query(n: usize) -> Result<()> {

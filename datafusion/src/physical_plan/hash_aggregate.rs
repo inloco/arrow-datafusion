@@ -45,6 +45,8 @@ use arrow::{
         ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
         Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array, Int64Decimal2Array,
         Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array, Int8Array,
+        Int96Array, Int96Decimal0Array, Int96Decimal10Array, Int96Decimal1Array,
+        Int96Decimal2Array, Int96Decimal3Array, Int96Decimal4Array, Int96Decimal5Array,
         StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     compute,
@@ -629,6 +631,10 @@ fn create_key_for_col(col: &ArrayRef, row: usize, vec: &mut KeyVec) -> Result<()
             let array = col.as_any().downcast_ref::<Int64Array>().unwrap();
             vec.extend_from_slice(&array.value(row).to_le_bytes());
         }
+        DataType::Int96 => {
+            let array = col.as_any().downcast_ref::<Int96Array>().unwrap();
+            vec.extend_from_slice(&array.value(row).to_le_bytes());
+        }
         DataType::Timestamp(TimeUnit::Millisecond, None) => {
             let array = col
                 .as_any()
@@ -696,6 +702,34 @@ fn create_key_for_col(col: &ArrayRef, row: usize, vec: &mut KeyVec) -> Result<()
         }
         DataType::Int64Decimal(10) => {
             let array = col.as_any().downcast_ref::<Int64Decimal10Array>().unwrap();
+            vec.extend_from_slice(&array.value(row).to_le_bytes());
+        }
+        DataType::Int96Decimal(0) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal0Array>().unwrap();
+            vec.extend_from_slice(&array.value(row).to_le_bytes());
+        }
+        DataType::Int96Decimal(1) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal1Array>().unwrap();
+            vec.extend_from_slice(&array.value(row).to_le_bytes());
+        }
+        DataType::Int96Decimal(2) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal2Array>().unwrap();
+            vec.extend_from_slice(&array.value(row).to_le_bytes());
+        }
+        DataType::Int96Decimal(3) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal3Array>().unwrap();
+            vec.extend_from_slice(&array.value(row).to_le_bytes());
+        }
+        DataType::Int96Decimal(4) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal4Array>().unwrap();
+            vec.extend_from_slice(&array.value(row).to_le_bytes());
+        }
+        DataType::Int96Decimal(5) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal5Array>().unwrap();
+            vec.extend_from_slice(&array.value(row).to_le_bytes());
+        }
+        DataType::Int96Decimal(10) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal10Array>().unwrap();
             vec.extend_from_slice(&array.value(row).to_le_bytes());
         }
         DataType::Dictionary(index_type, _) => match **index_type {
@@ -1430,6 +1464,10 @@ pub(crate) fn create_group_by_value(col: &ArrayRef, row: usize) -> Result<GroupB
             let array = col.as_any().downcast_ref::<Int64Array>().unwrap();
             Ok(GroupByScalar::Int64(array.value(row)))
         }
+        DataType::Int96 => {
+            let array = col.as_any().downcast_ref::<Int96Array>().unwrap();
+            Ok(GroupByScalar::Int96(array.value(row)))
+        }
         DataType::Utf8 => {
             let array = col.as_any().downcast_ref::<StringArray>().unwrap();
             Ok(GroupByScalar::Utf8(array.value(row).into()))
@@ -1508,6 +1546,34 @@ pub(crate) fn create_group_by_value(col: &ArrayRef, row: usize) -> Result<GroupB
         DataType::Int64Decimal(10) => {
             let array = col.as_any().downcast_ref::<Int64Decimal10Array>().unwrap();
             Ok(GroupByScalar::Int64Decimal(array.value(row), 10))
+        }
+        DataType::Int96Decimal(0) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal0Array>().unwrap();
+            Ok(GroupByScalar::Int96Decimal(array.value(row), 0))
+        }
+        DataType::Int96Decimal(1) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal1Array>().unwrap();
+            Ok(GroupByScalar::Int96Decimal(array.value(row), 1))
+        }
+        DataType::Int96Decimal(2) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal2Array>().unwrap();
+            Ok(GroupByScalar::Int96Decimal(array.value(row), 2))
+        }
+        DataType::Int96Decimal(3) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal3Array>().unwrap();
+            Ok(GroupByScalar::Int96Decimal(array.value(row), 3))
+        }
+        DataType::Int96Decimal(4) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal4Array>().unwrap();
+            Ok(GroupByScalar::Int96Decimal(array.value(row), 4))
+        }
+        DataType::Int96Decimal(5) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal5Array>().unwrap();
+            Ok(GroupByScalar::Int96Decimal(array.value(row), 5))
+        }
+        DataType::Int96Decimal(10) => {
+            let array = col.as_any().downcast_ref::<Int96Decimal10Array>().unwrap();
+            Ok(GroupByScalar::Int96Decimal(array.value(row), 10))
         }
         _ => Err(DataFusionError::NotImplemented(format!(
             "Unsupported GROUP BY type {}",

@@ -31,6 +31,8 @@ use arrow::{
         ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
         Int64Decimal0Array, Int64Decimal10Array, Int64Decimal1Array, Int64Decimal2Array,
         Int64Decimal3Array, Int64Decimal4Array, Int64Decimal5Array, Int8Array,
+        Int96Array, Int96Decimal0Array, Int96Decimal10Array, Int96Decimal1Array,
+        Int96Decimal2Array, Int96Decimal3Array, Int96Decimal4Array, Int96Decimal5Array,
         UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     datatypes::Field,
@@ -40,7 +42,7 @@ use super::format_state_name;
 use smallvec::smallvec;
 use smallvec::SmallVec;
 
-/// SUM aggregate expression
+// SUM aggregate expression
 #[derive(Debug)]
 pub struct Sum {
     name: String,
@@ -55,7 +57,9 @@ pub fn sum_return_type(arg_type: &DataType) -> Result<DataType> {
         DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
             Ok(DataType::Int64)
         }
+        DataType::Int96 => Ok(DataType::Int96),
         DataType::Int64Decimal(scale) => Ok(DataType::Int64Decimal(*scale)),
+        DataType::Int96Decimal(scale) => Ok(DataType::Int96Decimal(*scale)),
         DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
             Ok(DataType::UInt64)
         }
@@ -140,6 +144,11 @@ macro_rules! typed_sum_delta_batch {
         let delta = compute::sum(array);
         ScalarValue::Int64Decimal(delta, $SCALE)
     }};
+    ($VALUES:expr, $ARRAYTYPE:ident, Int96Decimal, $SCALE:expr) => {{
+        let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
+        let delta = compute::sum(array);
+        ScalarValue::Int96Decimal(delta, $SCALE)
+    }};
     ($VALUES:expr, $ARRAYTYPE:ident, $SCALAR:ident) => {{
         let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
         let delta = compute::sum(array);
@@ -153,6 +162,7 @@ pub(super) fn sum_batch(values: &ArrayRef) -> Result<ScalarValue> {
         DataType::Float64 => typed_sum_delta_batch!(values, Float64Array, Float64),
         DataType::Float32 => typed_sum_delta_batch!(values, Float32Array, Float32),
         DataType::Int64 => typed_sum_delta_batch!(values, Int64Array, Int64),
+        DataType::Int96 => typed_sum_delta_batch!(values, Int96Array, Int96),
         DataType::Int64Decimal(0) => {
             typed_sum_delta_batch!(values, Int64Decimal0Array, Int64Decimal, 0)
         }
@@ -174,6 +184,27 @@ pub(super) fn sum_batch(values: &ArrayRef) -> Result<ScalarValue> {
         DataType::Int64Decimal(10) => {
             typed_sum_delta_batch!(values, Int64Decimal10Array, Int64Decimal, 10)
         }
+        DataType::Int96Decimal(0) => {
+            typed_sum_delta_batch!(values, Int96Decimal0Array, Int96Decimal, 0)
+        }
+        DataType::Int96Decimal(1) => {
+            typed_sum_delta_batch!(values, Int96Decimal1Array, Int96Decimal, 1)
+        }
+        DataType::Int96Decimal(2) => {
+            typed_sum_delta_batch!(values, Int96Decimal2Array, Int96Decimal, 2)
+        }
+        DataType::Int96Decimal(3) => {
+            typed_sum_delta_batch!(values, Int96Decimal3Array, Int96Decimal, 3)
+        }
+        DataType::Int96Decimal(4) => {
+            typed_sum_delta_batch!(values, Int96Decimal4Array, Int96Decimal, 4)
+        }
+        DataType::Int96Decimal(5) => {
+            typed_sum_delta_batch!(values, Int96Decimal5Array, Int96Decimal, 5)
+        }
+        DataType::Int96Decimal(10) => {
+            typed_sum_delta_batch!(values, Int96Decimal10Array, Int96Decimal, 10)
+        }
         DataType::Int32 => typed_sum_delta_batch!(values, Int32Array, Int32),
         DataType::Int16 => typed_sum_delta_batch!(values, Int16Array, Int16),
         DataType::Int8 => typed_sum_delta_batch!(values, Int8Array, Int8),
@@ -194,6 +225,17 @@ pub(super) fn sum_batch(values: &ArrayRef) -> Result<ScalarValue> {
 macro_rules! typed_sum {
     ($OLD_VALUE:expr, $DELTA:expr, Int64Decimal, $TYPE:ident, $SCALE:expr) => {{
         ScalarValue::Int64Decimal(
+            match ($OLD_VALUE, $DELTA) {
+                (None, None) => None,
+                (Some(a), None) => Some(a.clone()),
+                (None, Some(b)) => Some(b.clone() as $TYPE),
+                (Some(a), Some(b)) => Some(a + (*b as $TYPE)),
+            },
+            $SCALE,
+        )
+    }};
+    ($OLD_VALUE:expr, $DELTA:expr, Int96Decimal, $TYPE:ident, $SCALE:expr) => {{
+        ScalarValue::Int96Decimal(
             match ($OLD_VALUE, $DELTA) {
                 (None, None) => None,
                 (Some(a), None) => Some(a.clone()),
@@ -276,6 +318,9 @@ pub(super) fn sum(lhs: &ScalarValue, rhs: &ScalarValue) -> Result<ScalarValue> {
         (ScalarValue::Int64(lhs), ScalarValue::Int8(rhs)) => {
             typed_sum!(lhs, rhs, Int64, i64)
         }
+        (ScalarValue::Int96(lhs), ScalarValue::Int96(rhs)) => {
+            typed_sum!(lhs, rhs, Int96, i128)
+        }
         (
             ScalarValue::Int64Decimal(lhs, l_scale),
             ScalarValue::Int64Decimal(rhs, r_scale),
@@ -287,6 +332,18 @@ pub(super) fn sum(lhs: &ScalarValue, rhs: &ScalarValue) -> Result<ScalarValue> {
                 )));
             }
             typed_sum!(lhs, rhs, Int64Decimal, i64, *l_scale)
+        }
+        (
+            ScalarValue::Int96Decimal(lhs, l_scale),
+            ScalarValue::Int96Decimal(rhs, r_scale),
+        ) => {
+            if l_scale != r_scale {
+                return Err(DataFusionError::Internal(format!(
+                    "Scale doesn't match: {} and {}",
+                    l_scale, r_scale
+                )));
+            }
+            typed_sum!(lhs, rhs, Int96Decimal, i128, *l_scale)
         }
         e => {
             return Err(DataFusionError::Internal(format!(
