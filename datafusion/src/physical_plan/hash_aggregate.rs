@@ -783,7 +783,12 @@ pub(crate) fn create_key(
 ) -> Result<()> {
     vec.clear();
     for col in group_by_keys {
-        create_key_for_col(col, row, vec)?
+        if !col.is_valid(row) {
+            vec.push(0xFE);
+        } else {
+            vec.push(0xFF);
+            create_key_for_col(col, row, vec)?
+        }
     }
     Ok(())
 }
