@@ -22,10 +22,21 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::{convert::TryInto, vec};
 
+use super::{
+    parser::DFParser,
+    utils::{
+        can_columns_satisfy_exprs, expr_as_column_expr, extract_aliases,
+        find_aggregate_exprs, find_column_exprs, find_window_exprs,
+        group_window_expr_by_sort_keys, rebase_expr, resolve_aliases_to_exprs,
+        resolve_positions_to_exprs,
+    },
+};
 use crate::catalog::TableReference;
+use crate::cube_ext::alias::LogicalAlias;
+use crate::cube_ext::join::contains_table_scan;
 use crate::datasource::TableProvider;
 use crate::logical_plan::window_frames::{
-    check_window_bound_order, WindowFrame, WindowFrameUnits,
+    check_window_bound_order, WindowFrame, WindowFrameBound, WindowFrameUnits,
 };
 use crate::logical_plan::Expr::Alias;
 use crate::logical_plan::{
@@ -35,6 +46,7 @@ use crate::logical_plan::{
 };
 use crate::prelude::JoinType;
 use crate::scalar::ScalarValue;
+use crate::sql::utils::find_rolling_aggregate_exprs;
 use crate::{
     error::{DataFusionError, Result},
     physical_plan::udaf::AggregateUDF,
@@ -46,6 +58,7 @@ use crate::{
 };
 use arrow::datatypes::*;
 use hashbrown::HashMap;
+use itertools::Itertools;
 use sqlparser::ast::{
     BinaryOperator, DataType as SQLDataType, DateTimeField, Expr as SQLExpr, FunctionArg,
     Ident, Join, JoinConstraint, JoinOperator, ObjectName, Offset, Query, RollingOffset,
@@ -55,20 +68,6 @@ use sqlparser::ast::{
 use sqlparser::ast::{ColumnDef as SQLColumnDef, ColumnOption};
 use sqlparser::ast::{OrderByExpr, Statement};
 use sqlparser::parser::ParserError::ParserError;
-
-use super::{
-    parser::DFParser,
-    utils::{
-        can_columns_satisfy_exprs, expr_as_column_expr, extract_aliases,
-        find_aggregate_exprs, find_column_exprs, find_window_exprs,
-        group_window_expr_by_sort_keys, rebase_expr, resolve_aliases_to_exprs,
-        resolve_positions_to_exprs,
-    },
-};
-use crate::cube_ext::alias::LogicalAlias;
-use crate::cube_ext::join::contains_table_scan;
-use crate::sql::utils::find_rolling_aggregate_exprs;
-use itertools::Itertools;
 
 /// The ContextProvider trait allows the query planner to obtain meta-data about tables and
 /// functions referenced in SQL statements
@@ -1487,6 +1486,14 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                     .clone()
                     .unwrap_or(sqlparser::ast::WindowFrameBound::CurrentRow)
                     .try_into()?;
+
+                //Swap the lower and upper bounds of the window frame if the lower bound is Following and the upper bound is CurrentRow (the default value).
+                let (start, end) = match (start, end) {
+                    (WindowFrameBound::Following(v), WindowFrameBound::CurrentRow) => {
+                        (WindowFrameBound::CurrentRow, WindowFrameBound::Following(v))
+                    }
+                    (a, b) => (a, b),
+                };
 
                 check_window_bound_order(&start, &end)?;
 
