@@ -38,7 +38,7 @@ use async_trait::async_trait;
 
 use crate::logical_plan::Operator;
 use crate::physical_plan::expressions::{
-    BinaryExpr, CastExpr, Column, Literal, TryCastExpr,
+    BinaryExpr, CastExpr, Column, Literal, NotExpr, TryCastExpr,
 };
 use futures::stream::{Stream, StreamExt};
 
@@ -197,6 +197,13 @@ fn extract_single_value_columns_impl<'a>(
                 }
             }
             _ => {}
+        }
+    } else if predicate.is::<Column>() {
+        out.push(predicate.downcast_ref::<Column>().unwrap());
+    } else if predicate.is::<NotExpr>() {
+        let inner = predicate.downcast_ref::<NotExpr>().unwrap().arg();
+        if inner.as_any().is::<Column>() {
+            out.push(inner.as_any().downcast_ref::<Column>().unwrap());
         }
     }
 }
