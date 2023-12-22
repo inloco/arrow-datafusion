@@ -802,7 +802,7 @@ macro_rules! equal_rows_elem {
         let left_array = $l.as_any().downcast_ref::<$array_type>().unwrap();
         let right_array = $r.as_any().downcast_ref::<$array_type>().unwrap();
 
-        match (left_array.is_null($left), left_array.is_null($right)) {
+        match (left_array.is_null($left), right_array.is_null($right)) {
             (false, false) => left_array.value($left) == right_array.value($right),
             _ => false,
         }
