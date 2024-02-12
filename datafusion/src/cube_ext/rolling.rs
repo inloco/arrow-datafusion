@@ -702,6 +702,12 @@ impl ExecutionPlan for RollingWindowAggExec {
                 append_value(out_aggs[i].as_mut(), &null)?;
             }
         }
+        for i in 0..out_extra_aggs.len() {
+            let null = &extra_agg_nulls[i];
+            for _ in 0..num_empty_dims {
+                append_value(out_extra_aggs[i].as_mut(), &null)?;
+            }
+        }
         for _ in 0..num_empty_dims {
             out_aggs_keep.append_value(true)?;
         }
