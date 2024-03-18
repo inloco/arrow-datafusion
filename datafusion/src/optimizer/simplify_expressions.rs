@@ -35,17 +35,27 @@ use crate::{error::Result, logical_plan::Operator};
 pub struct SimplifyExpressions {}
 
 fn expr_contains(expr: &Expr, needle: &Expr) -> bool {
+    // We turned off the recursion becouse it lead to wrong optimizations like b > 2 and ((b > 2 and a=1) or (a = 3)) -> b > 2
+    //    expr == needle
     match expr {
         Expr::BinaryExpr {
             left,
             op: Operator::And,
             right,
-        } => expr_contains(left, needle) || expr_contains(right, needle),
+        } => {
+            // We turned off the recursion becouse it lead to wrong optimizations like b > 2 and ((b > 2 and a=1) or (a = 3)) -> b > 2
+            left.as_ref() == needle || right.as_ref() == needle
+            //expr_contains(left, needle) || expr_contains(right, needle)
+        }
         Expr::BinaryExpr {
             left,
             op: Operator::Or,
             right,
-        } => expr_contains(left, needle) || expr_contains(right, needle),
+        } => {
+            // We turned off the recursion becouse it lead to wrong optimizations like b > 2 and ((b > 2 and a=1) or (a = 3)) -> b > 2
+            left.as_ref() == needle || right.as_ref() == needle
+            //expr_contains(left, needle) || expr_contains(right, needle)
+        }
         _ => expr == needle,
     }
 }
