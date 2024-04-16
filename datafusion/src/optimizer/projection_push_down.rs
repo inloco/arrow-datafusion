@@ -1,4 +1,4 @@
-// Licensed to the Apache Software Foundation (ASF) under one
+// Licensed to the Apache Software Foundation (ASF) under onCount
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
 // regarding copyright ownership.  The ASF licenses this file
@@ -22,11 +22,12 @@ use crate::cube_ext::alias::LogicalAlias;
 use crate::error::{DataFusionError, Result};
 use crate::execution::context::ExecutionProps;
 use crate::logical_plan::{
-    build_join_schema, exprlist_to_fields, Column, DFField, DFSchema, DFSchemaRef, Expr,
-    LogicalPlan, LogicalPlanBuilder, ToDFSchema,
+    build_join_schema, exprlist_to_fields, lit, Column, DFField, DFSchema, DFSchemaRef,
+    Expr, LogicalPlan, LogicalPlanBuilder, ToDFSchema,
 };
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
+use crate::physical_plan::aggregates;
 use crate::sql::utils::find_sort_exprs;
 use arrow::datatypes::Schema;
 use arrow::error::Result as ArrowResult;
@@ -306,6 +307,18 @@ fn optimize_plan(
                     Ok(())
                 }
             })?;
+
+            //We cannot left Aggregate without both group expr and aggr expr so we add simple count
+            //here
+            let new_aggr_expr = if group_expr.is_empty() && new_aggr_expr.is_empty() {
+                vec![Expr::AggregateFunction {
+                    fun: aggregates::AggregateFunction::Count,
+                    args: vec![lit(1_u8)],
+                    distinct: false,
+                }]
+            } else {
+                new_aggr_expr
+            };
 
             let new_input = Arc::new(optimize_plan(
                 optimizer,
